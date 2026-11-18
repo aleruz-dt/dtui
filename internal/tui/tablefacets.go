@@ -99,13 +99,23 @@ func (v *tableView) requestSavePreset() tea.Cmd {
 	if v.spec.API != "" {
 		return statusErr("presets need a DQL-backed view")
 	}
+	if v.scope.Entity != nil {
+		name := v.scope.Entity.Name
+		if name == "" {
+			name = v.scope.Entity.ID
+		}
+		return statusErr("preset would drop the scope on " + name + " — open the unscoped view first")
+	}
 	if len(v.facets)+len(v.searches) == 0 {
 		return statusErr("nothing to save — add a facet (f) or server search first")
 	}
 	facets := append([]catalog.Facet{}, v.facets...)
 	searches := append([]string{}, v.searches...)
 	view := v.spec.Name
-	tf := v.scope.Timeframe.Label
+	// W does not pin the session timeframe: labels like "problem"/"trace" are
+	// not durations, and pinning would reset the session on every :preset.
+	// YAML may still set timeframe as an optional override.
+	tf := ""
 	if v.facetMode != facetOff {
 		v.closeFacets()
 	}
@@ -309,7 +319,7 @@ func (v *tableView) handleFacetKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		fallthrough
 	default:
-		if isSavePresetKey(msg.String()) {
+		if isSavePresetKey(msg.String()) && v.facetMode == facetFieldStage && v.facetInput.Value() == "" {
 			return v.requestSavePreset()
 		}
 		var cmd tea.Cmd

@@ -33,12 +33,11 @@ import (
 var version = "dev"
 
 var (
-	cfgFile         string
-	contextName     string
-	noAgent         bool
-	presetName      string
-	facetFlags      []string
-	listPresetsFlag bool
+	cfgFile     string
+	contextName string
+	noAgent     bool
+	presetName  string
+	facetFlags  []string
 )
 
 var rootCmd = &cobra.Command{
@@ -86,29 +85,21 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
   # Launch against a specific context (session-local, never persisted)
   dtui --context prod
 
-  # Named facet preset from .dtui.yaml (session-local)
+  # Named facet preset from .dtui.yaml or a personal save (session-local)
   dtui --preset payments-errors
   dtui logs --preset payments-errors
   dtui logs --facet loglevel=ERROR
   dtui list-presets
-  dtui --context prod list-presets`,
+  dtui --context prod list-presets
+  dtui delete-preset payments-errors`,
 	Args:              cobra.MaximumNArgs(2),
 	ValidArgsFunction: viewCompletion,
 	SilenceUsage:      true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// A committed .dtui.yaml supplies workspace defaults; a broken
 		// one must never brick dtui — errors degrade to a startup warning.
-		ws, wsWarnings := loadWorkspace()
-		personal, personalWarn := loadPersonalPresets()
-		if personalWarn != "" {
-			wsWarnings = append(wsWarnings, personalWarn)
-		}
+		ws, personal, wsWarnings := loadPresetFiles()
 		presetCatalog := workspace.MergePresetCatalog(ws, personal)
-
-		if listPresetsFlag {
-			writePresetList(cmd.OutOrStdout(), presetCatalog)
-			return nil
-		}
 
 		if !noAgent {
 			if info := aidetect.Detect(); info.Detected {
@@ -197,8 +188,10 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			InitialSearches:  narrow.searches,
 			HistoryPath:      historyPath(),
 			QueryHistoryPath: queryHistoryPath(),
-			Presets:          namedPresets(presetCatalog),
+			Presets:          mergedNamedPresets(ws, personal),
+			WorkspacePresets: namedPresets(ws, false),
 			SavePreset:       savePersonalPreset(personalPresetsPath()),
+			DeletePreset:     deletePersonalPreset(personalPresetsPath()),
 		}
 		if ws != nil {
 			opts.WorkspaceSegments = workspaceSegments(ws)
@@ -447,18 +440,27 @@ func viewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]str
 }
 
 func presetCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	ws, _ := loadWorkspace()
-	personal, _ := loadPersonalPresets()
-	return workspace.MergePresetCatalog(ws, personal).PresetNames(), cobra.ShellCompDirectiveNoFileComp
+	ws, _ := loadPresetCatalog()
+	return ws.PresetNames(), cobra.ShellCompDirectiveNoFileComp
+}
+
+func personalPresetCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	_, personal, _ := loadPresetFiles()
+	if personal == nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return personal.PresetNames(), cobra.ShellCompDirectiveNoFileComp
 }
 
 func main() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "dtctl config file (searches .dtctl.yaml upward, then $XDG_CONFIG_HOME/dtctl/config; env: DTCTL_CONFIG)")
 	rootCmd.PersistentFlags().StringVar(&contextName, "context", "", "use a specific context for this session (env: DTCTL_CONTEXT; not persisted)")
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "launch even if an AI agent environment is detected")
-	rootCmd.Flags().StringVar(&presetName, "preset", "", "named facet preset from .dtui.yaml (session-local; not auto-applied)")
+	rootCmd.Flags().StringVar(&presetName, "preset", "", "named facet preset from .dtui.yaml or ~/.local/state/dtui/presets.yaml (session-local; not auto-applied)")
 	rootCmd.Flags().StringArrayVar(&facetFlags, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
-	rootCmd.Flags().BoolVar(&listPresetsFlag, "list-presets", false, "print named presets from .dtui.yaml and exit")
 	_ = rootCmd.RegisterFlagCompletionFunc("preset", presetCompletion)
 
 	// dtctl reserves -v for --verbose; keep the long form only.

@@ -847,8 +847,6 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return v.openFacets()
 	case "F":
 		return v.clearFacets()
-	case "W", "shift+w":
-		return v.requestSavePreset()
 	case "esc":
 		if v.filter != "" {
 			v.filterInput.SetValue("")
@@ -958,6 +956,9 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return v.inspect(rec)
 	default:
+		if isSavePresetKey(msg.String()) {
+			return v.requestSavePreset()
+		}
 		if target, ok := v.spec.Drills[msg.String()]; ok {
 			return v.drill(target)
 		}

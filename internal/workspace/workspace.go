@@ -56,8 +56,9 @@ type Workspace struct {
 	// time.
 	PrimaryTags []string `yaml:"primary-tags,omitempty"`
 	// Presets are named facet/search sets for a catalog view. They are never
-	// applied automatically — the CLI --preset flag (or a later :preset
-	// command) selects one. Keys are kebab-case names.
+	// applied automatically — the CLI --preset flag or :preset selects one.
+	// Personal copies also live in ~/.local/state/dtui/presets.yaml. Keys are
+	// kebab-case names.
 	Presets map[string]Preset `yaml:"presets,omitempty"`
 
 	path string // discovered file path; never serialized
@@ -313,11 +314,17 @@ func validatePresets(presets map[string]Preset) error {
 			if strings.TrimSpace(f.Field) == "" || strings.TrimSpace(f.Value) == "" {
 				return fmt.Errorf("presets.%s: facets[%d]: field and value are required", name, i)
 			}
-			if strings.ContainsAny(f.Field, "`|\n\r") {
+			if unsafeFacetIdent(f.Field) {
 				return fmt.Errorf("presets.%s: facets[%d]: field contains unsafe characters", name, i)
 			}
 			if f.MapField != "" && strings.TrimSpace(f.MapKey) == "" {
 				return fmt.Errorf("presets.%s: facets[%d]: map-key is required when map-field is set", name, i)
+			}
+			if f.MapField != "" && unsafeFacetIdent(f.MapField) {
+				return fmt.Errorf("presets.%s: facets[%d]: map-field contains unsafe characters", name, i)
+			}
+			if f.MapKey != "" && unsafeFacetIdent(f.MapKey) {
+				return fmt.Errorf("presets.%s: facets[%d]: map-key contains unsafe characters", name, i)
 			}
 		}
 		for i, s := range p.Searches {
@@ -332,6 +339,13 @@ func validatePresets(presets map[string]Preset) error {
 // ValidPresetName reports whether name is kebab-case (a-z, digits, hyphens).
 func ValidPresetName(name string) bool {
 	return presetNameRe.MatchString(name)
+}
+
+// unsafeFacetIdent is the workspace-side copy of catalog.SafeFacetField's
+// rejection: this package cannot import catalog. Identifiers are pasted into
+// DQL inside backticks with no escaping.
+func unsafeFacetIdent(s string) bool {
+	return strings.ContainsAny(s, "`|\n\r")
 }
 
 // MergePresetCatalog returns a workspace that contains only presets: project
@@ -350,26 +364,28 @@ func MergePresetCatalog(project, personal *Workspace) *Workspace {
 	return out
 }
 
-// SavePreset writes (or replaces) one named preset in a personal presets
-// file. The file holds only version + presets — it is not a full workspace.
-func SavePreset(path, name string, p Preset) error {
-	if !ValidPresetName(name) {
-		return fmt.Errorf("preset name %q must be kebab-case (a-z, digits, hyphens)", name)
-	}
+func loadPersonalOrEmpty(path string) (*Workspace, error) {
 	w := &Workspace{Version: Version, Presets: map[string]Preset{}}
-	if _, err := os.Stat(path); err == nil {
-		loaded, err := Load(path)
-		if err != nil {
-			return err
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return w, nil
 		}
-		w = loaded
-		if w.Presets == nil {
-			w.Presets = map[string]Preset{}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
+		return nil, err
 	}
-	w.Presets[name] = p
+	loaded, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if loaded.Presets == nil {
+		loaded.Presets = map[string]Preset{}
+	}
+	return loaded, nil
+}
+
+func writePersonalPresets(path string, w *Workspace) error {
+	if w.Presets == nil {
+		w.Presets = map[string]Preset{}
+	}
 	w.Version = Version
 	if err := validatePresets(w.Presets); err != nil {
 		return err
@@ -386,6 +402,37 @@ func SavePreset(path, name string, p Preset) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+// SavePreset writes (or replaces) one named preset in a personal presets
+// file. The file holds only version + presets — it is not a full workspace.
+func SavePreset(path, name string, p Preset) error {
+	if !ValidPresetName(name) {
+		return fmt.Errorf("preset name %q must be kebab-case (a-z, digits, hyphens)", name)
+	}
+	w, err := loadPersonalOrEmpty(path)
+	if err != nil {
+		return err
+	}
+	w.Presets[name] = p
+	return writePersonalPresets(path, w)
+}
+
+// DeletePreset removes one named preset from a personal presets file. It
+// does not edit a committed .dtui.yaml.
+func DeletePreset(path, name string) error {
+	if !ValidPresetName(name) {
+		return fmt.Errorf("preset name %q must be kebab-case (a-z, digits, hyphens)", name)
+	}
+	w, err := loadPersonalOrEmpty(path)
+	if err != nil {
+		return err
+	}
+	if _, ok := w.Presets[name]; !ok {
+		return fmt.Errorf("preset %q is not in the personal file", name)
+	}
+	delete(w.Presets, name)
+	return writePersonalPresets(path, w)
 }
 
 // LookupPreset returns the named preset. Names are matched exactly.

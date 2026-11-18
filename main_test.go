@@ -84,15 +84,16 @@ segments:
 }
 
 func TestListPresetsIsACommand(t *testing.T) {
-	found := false
+	need := map[string]bool{"list-presets": false, "delete-preset": false}
 	for _, c := range rootCmd.Commands() {
-		if c.Name() == "list-presets" {
-			found = true
-			break
+		if _, ok := need[c.Name()]; ok {
+			need[c.Name()] = true
 		}
 	}
-	if !found {
-		t.Fatal("list-presets must be a cobra subcommand so `dtui --context prod list-presets` is not parsed as a view")
+	for name, found := range need {
+		if !found {
+			t.Fatalf("%s must be a cobra subcommand so `dtui --context prod %s` is not parsed as a view", name, name)
+		}
 	}
 }
 
@@ -127,6 +128,15 @@ presets:
 	}
 	if _, err := resolveLaunchNarrowing("", nil, "payments-errors", nil); err == nil {
 		t.Fatal("missing catalog should error")
+	}
+	if _, err := resolveLaunchNarrowing("query", nil, "", []string{"loglevel=ERROR"}); err == nil {
+		t.Fatal("query --facet should error")
+	}
+	if _, err := resolveLaunchNarrowing("slos", nil, "", []string{"id=x"}); err == nil {
+		t.Fatal("API-backed --facet should error")
+	}
+	if _, err := resolveLaunchNarrowing("nav", nil, "", []string{"id=x"}); err == nil {
+		t.Fatal("nav --facet should error")
 	}
 }
 

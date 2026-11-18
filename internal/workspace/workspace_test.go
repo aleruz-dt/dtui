@@ -397,6 +397,8 @@ func TestLoadPresetErrors(t *testing.T) {
 		{"empty narrowing", "presets:\n  payments-errors:\n    view: logs\n", "at least one facet or search"},
 		{"missing facet value", "presets:\n  payments-errors:\n    view: logs\n    facets:\n      - field: loglevel\n", "field and value"},
 		{"unsafe field", "presets:\n  payments-errors:\n    view: logs\n    facets:\n      - field: \"a|b\"\n        value: x\n", "unsafe"},
+		{"unsafe map-field", "presets:\n  payments-errors:\n    view: logs\n    facets:\n      - field: labels\n        value: x\n        map-field: \"tags:`k8s\"\n        map-key: app\n", "unsafe"},
+		{"unsafe map-key", "presets:\n  payments-errors:\n    view: logs\n    facets:\n      - field: labels\n        value: x\n        map-field: tags:k8s.labels\n        map-key: \"a|b\"\n", "unsafe"},
 		{"bad timeframe", "presets:\n  payments-errors:\n    view: logs\n    timeframe: 2w\n    facets:\n      - field: a\n        value: b\n", "expected <n>m"},
 		{"map-field without key", "presets:\n  payments-errors:\n    view: logs\n    facets:\n      - field: labels\n        value: x\n        map-field: tags:k8s.labels\n", "map-key"},
 		{"empty search", "presets:\n  payments-errors:\n    view: logs\n    searches:\n      - \"\"\n", "empty search"},
@@ -461,6 +463,33 @@ func TestSavePresetRoundTrip(t *testing.T) {
 	}
 	if err := SavePreset(path, "Not-Kebab", p); err == nil {
 		t.Fatal("expected kebab-case error")
+	}
+}
+
+func TestDeletePresetRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "presets.yaml")
+	p := Preset{View: "logs", Facets: []PresetFacet{{Field: "loglevel", Value: "ERROR"}}}
+	if err := SavePreset(path, "payments-errors", p); err != nil {
+		t.Fatal(err)
+	}
+	if err := SavePreset(path, "checkout-pods", Preset{View: "pods", Facets: []PresetFacet{{Field: "k8s.namespace.name", Value: "checkout"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeletePreset(path, "payments-errors"); err != nil {
+		t.Fatal(err)
+	}
+	w, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := w.LookupPreset("payments-errors"); ok {
+		t.Fatal("payments-errors still present")
+	}
+	if _, ok := w.LookupPreset("checkout-pods"); !ok {
+		t.Fatal("checkout-pods removed")
+	}
+	if err := DeletePreset(path, "missing"); err == nil {
+		t.Fatal("expected missing-name error")
 	}
 }
 

@@ -42,8 +42,13 @@ type Options struct {
 	QueryHistoryPath string // submitted-DQL history file; "" = in-memory only
 	// Presets are named facet sets available to :preset this session
 	// (workspace + personal). SavePreset persists a new one; nil disables save.
-	Presets    []NamedPreset
-	SavePreset func(NamedPreset) error
+	// DeletePreset removes a personal preset; nil disables delete.
+	// WorkspacePresets are the committed .dtui.yaml copies, used to restore a
+	// name after a personal overlay is deleted.
+	Presets          []NamedPreset
+	WorkspacePresets []NamedPreset
+	SavePreset       func(NamedPreset) error
+	DeletePreset     func(name string) error
 
 	// SegmentSource backs the segment picker and workspace seeding; nil
 	// disables both. Constructed in the dtui main package (no HTTP here).
@@ -179,9 +184,10 @@ type app struct {
 	// UI-picker segments carry none.
 	segPTags map[string][]string
 
-	hist    *historyStore
-	qhist   *queryHistory
-	presets map[string]NamedPreset
+	hist             *historyStore
+	qhist            *queryHistory
+	presets          map[string]NamedPreset
+	workspacePresets map[string]NamedPreset
 
 	status    string
 	statusErr bool
@@ -220,17 +226,23 @@ type spinnerTickMsg struct{}
 
 func newApp(opts Options) (*app, error) {
 	a := &app{
-		opts:        opts,
-		ds:          &dataSource{exec: opts.Executor, sources: opts.Sources},
-		tf:          catalog.DefaultTimeframe,
-		hist:        loadHistory(opts.HistoryPath, opts.ContextName),
-		qhist:       loadQueryHistory(opts.QueryHistoryPath),
-		primaryTags: opts.WorkspacePrimaryTags,
-		presets:     map[string]NamedPreset{},
+		opts:             opts,
+		ds:               &dataSource{exec: opts.Executor, sources: opts.Sources},
+		tf:               catalog.DefaultTimeframe,
+		hist:             loadHistory(opts.HistoryPath, opts.ContextName),
+		qhist:            loadQueryHistory(opts.QueryHistoryPath),
+		primaryTags:      opts.WorkspacePrimaryTags,
+		presets:          map[string]NamedPreset{},
+		workspacePresets: map[string]NamedPreset{},
 	}
 	for _, p := range opts.Presets {
 		if p.Name != "" {
 			a.presets[p.Name] = p
+		}
+	}
+	for _, p := range opts.WorkspacePresets {
+		if p.Name != "" {
+			a.workspacePresets[p.Name] = p
 		}
 	}
 	if tf, ok := catalog.ParseTimeframe(opts.InitialTimeframe); ok {
@@ -766,7 +778,7 @@ func (a *app) navigateExternal(msg NavigateMsg) tea.Cmd {
 		// break out of the identifier and inject pipeline stages. Values are always
 		// %q-quoted string literals, so only the field is a breakout vector; drop
 		// any field that carries one of those characters rather than emit unsafe DQL.
-		if strings.ContainsAny(f.Field, "`|\n\r") {
+		if !catalog.SafeFacetField(f.Field) {
 			warn = statusErr(fmt.Sprintf("navigate: dropping facet with unsafe field %q", f.Field))
 			continue
 		}

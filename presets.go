@@ -22,23 +22,60 @@ var listPresetsCmd = &cobra.Command{
 	Long:  "Print presets from .dtui.yaml and ~/.local/state/dtui/presets.yaml. Does not need a TTY.",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		presets, _ := loadPresetCatalog()
-		writePresetList(cmd.OutOrStdout(), presets)
+		project, personal, warnings := loadPresetFiles()
+		writeLoadWarnings(cmd.ErrOrStderr(), warnings)
+		writePresetList(cmd.OutOrStdout(), workspace.MergePresetCatalog(project, personal), personal)
+		return nil
+	},
+}
+
+var deletePresetCmd = &cobra.Command{
+	Use:               "delete-preset NAME",
+	Short:             "Delete a personal named facet preset and exit",
+	Long:              "Removes NAME from ~/.local/state/dtui/presets.yaml. Workspace presets in .dtui.yaml are not edited. Does not need a TTY.",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: personalPresetCompletion,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		project, personal, warnings := loadPresetFiles()
+		writeLoadWarnings(cmd.ErrOrStderr(), warnings)
+		if _, ok := personal.LookupPreset(name); !ok {
+			if _, inWS := project.LookupPreset(name); inWS {
+				return fmt.Errorf("preset %q is in .dtui.yaml — edit that file (personal file has no %q)", name, name)
+			}
+			return fmt.Errorf("unknown personal preset %q", name)
+		}
+		if err := workspace.DeletePreset(personalPresetsPath(), name); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "deleted preset %s\n", name)
 		return nil
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(listPresetsCmd)
+	rootCmd.AddCommand(deletePresetCmd)
 }
 
-func loadPresetCatalog() (*workspace.Workspace, []string) {
-	ws, warnings := loadWorkspace()
+func loadPresetFiles() (project, personal *workspace.Workspace, warnings []string) {
+	project, warnings = loadWorkspace()
 	personal, personalWarn := loadPersonalPresets()
 	if personalWarn != "" {
 		warnings = append(warnings, personalWarn)
 	}
-	return workspace.MergePresetCatalog(ws, personal), warnings
+	return project, personal, warnings
+}
+
+func loadPresetCatalog() (*workspace.Workspace, []string) {
+	project, personal, warnings := loadPresetFiles()
+	return workspace.MergePresetCatalog(project, personal), warnings
+}
+
+func writeLoadWarnings(w io.Writer, warnings []string) {
+	for _, msg := range warnings {
+		fmt.Fprintln(w, msg)
+	}
 }
 
 // launchNarrowing is the resolved --preset / --facet input applied to the
@@ -70,8 +107,8 @@ func resolveLaunchNarrowing(cliView string, ws *workspace.Workspace, presetName 
 		if catalog.Lookup(presetView) == nil && !isBespokeView(presetView) {
 			return n, fmt.Errorf("preset %q: unknown view %q", presetName, p.View)
 		}
-		if isBespokeView(presetView) || isNavView(presetView) {
-			return n, fmt.Errorf("preset %q: view %q is not a catalog table", presetName, p.View)
+		if err := requireFacetTable(presetView); err != nil {
+			return n, fmt.Errorf("preset %q: %w", presetName, err)
 		}
 		if n.view != "" {
 			if canonicalViewName(n.view) != presetView {
@@ -93,10 +130,31 @@ func resolveLaunchNarrowing(cliView string, ws *workspace.Workspace, presetName 
 	if presetName == "" && len(extra) > 0 && n.view == "" {
 		return n, fmt.Errorf("--facet requires a view argument (e.g. dtui logs --facet loglevel=ERROR)")
 	}
+	if n.view != "" && (presetName != "" || len(n.facets) > 0) {
+		if err := requireFacetTable(n.view); err != nil {
+			return n, err
+		}
+	}
 	if n.view != "" && catalog.Lookup(n.view) == nil && !isBespokeView(n.view) && !isNavView(n.view) {
 		return n, fmt.Errorf("unknown view %q", n.view)
 	}
 	return n, nil
+}
+
+// requireFacetTable rejects views that cannot apply server-side facets: the
+// bespoke screens, the navigator, and API-backed catalog specs.
+func requireFacetTable(name string) error {
+	if isBespokeView(name) || isNavView(name) {
+		return fmt.Errorf("view %q is not a catalog table", name)
+	}
+	spec := catalog.Lookup(name)
+	if spec == nil {
+		return fmt.Errorf("unknown view %q", name)
+	}
+	if spec.API != "" {
+		return fmt.Errorf("view %q is API-backed and has no DQL facets", name)
+	}
+	return nil
 }
 
 func canonicalViewName(name string) string {
@@ -134,7 +192,7 @@ func parseFacetFlags(flags []string) ([]catalog.Facet, error) {
 		if !ok || field == "" || value == "" {
 			return nil, fmt.Errorf("--facet %q: expected field=value", s)
 		}
-		if strings.ContainsAny(field, "`|\n\r") {
+		if !catalog.SafeFacetField(field) {
 			return nil, fmt.Errorf("--facet %q: field contains unsafe characters", s)
 		}
 		out = append(out, catalog.Facet{Field: field, Value: value})
@@ -162,15 +220,21 @@ func mergeFacets(base, extra []catalog.Facet) []catalog.Facet {
 	return out
 }
 
-func writePresetList(w io.Writer, ws *workspace.Workspace) {
-	if ws == nil || len(ws.Presets) == 0 {
+func writePresetList(w io.Writer, merged, personal *workspace.Workspace) {
+	if merged == nil || len(merged.Presets) == 0 {
 		fmt.Fprintln(w, "no presets")
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tVIEW\tNARROWING")
-	for _, name := range ws.PresetNames() {
-		p := ws.Presets[name]
+	fmt.Fprintln(tw, "NAME\tVIEW\tSOURCE\tNARROWING")
+	for _, name := range merged.PresetNames() {
+		p := merged.Presets[name]
+		src := "workspace"
+		if personal != nil {
+			if _, ok := personal.LookupPreset(name); ok {
+				src = "personal"
+			}
+		}
 		var parts []string
 		for _, f := range p.Facets {
 			parts = append(parts, f.Field+"="+f.Value)
@@ -178,12 +242,12 @@ func writePresetList(w io.Writer, ws *workspace.Workspace) {
 		for _, s := range p.Searches {
 			parts = append(parts, "/"+s)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", name, p.View, strings.Join(parts, ", "))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, p.View, src, strings.Join(parts, ", "))
 	}
 	_ = tw.Flush()
 }
 
-func namedPresets(ws *workspace.Workspace) []tui.NamedPreset {
+func namedPresets(ws *workspace.Workspace, personal bool) []tui.NamedPreset {
 	if ws == nil {
 		return nil
 	}
@@ -196,7 +260,23 @@ func namedPresets(ws *workspace.Workspace) []tui.NamedPreset {
 			Timeframe: p.Timeframe,
 			Facets:    catalogFacets(p.Facets),
 			Searches:  append([]string{}, p.Searches...),
+			Personal:  personal,
 		})
+	}
+	return out
+}
+
+func mergedNamedPresets(project, personal *workspace.Workspace) []tui.NamedPreset {
+	merged := workspace.MergePresetCatalog(project, personal)
+	out := namedPresets(merged, false)
+	personalNames := map[string]bool{}
+	if personal != nil {
+		for _, name := range personal.PresetNames() {
+			personalNames[name] = true
+		}
+	}
+	for i, p := range out {
+		out[i].Personal = personalNames[p.Name]
 	}
 	return out
 }
@@ -213,6 +293,12 @@ func savePersonalPreset(path string) func(tui.NamedPreset) error {
 		return workspace.SavePreset(path, p.Name, workspace.Preset{
 			View: p.View, Timeframe: p.Timeframe, Facets: facets, Searches: p.Searches,
 		})
+	}
+}
+
+func deletePersonalPreset(path string) func(name string) error {
+	return func(name string) error {
+		return workspace.DeletePreset(path, name)
 	}
 }
 

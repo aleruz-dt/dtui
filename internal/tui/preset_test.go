@@ -83,7 +83,7 @@ func TestSavePresetFromAnyFacetedTable(t *testing.T) {
 	press(a, key("enter"))
 	select {
 	case p := <-saved:
-		if p.Name != "checkout-pods" || p.View != "pods" || p.Facets[0].Value != "checkout" {
+		if p.Name != "checkout-pods" || p.View != "pods" || p.Facets[0].Value != "checkout" || p.Timeframe != "" {
 			t.Errorf("saved %+v", p)
 		}
 	default:
@@ -122,5 +122,116 @@ func TestPresetPickerShowsViewAndOpens(t *testing.T) {
 	tv := a.top().(*tableView)
 	if tv.spec.Name != "pods" || len(tv.facets) != 1 || tv.facets[0].Value != "checkout" {
 		t.Errorf("enter opened view=%s facets=%+v", tv.spec.Name, tv.facets)
+	}
+}
+
+func TestSavePresetOmitsSessionTimeframe(t *testing.T) {
+	a := testApp(t, "logs")
+	saved := make(chan NamedPreset, 1)
+	a.opts.SavePreset = func(p NamedPreset) error {
+		saved <- p
+		return nil
+	}
+	tv := a.top().(*tableView)
+	tv.facets = []catalog.Facet{{Field: "loglevel", Value: "ERROR"}}
+	tv.scope.Timeframe.Label = "problem"
+	press(a, key("W"))
+	overlayAs[*presetSaveOverlay](t, a)
+	typeText(a, "payments-errors")
+	press(a, key("enter"))
+	select {
+	case p := <-saved:
+		if p.Timeframe != "" {
+			t.Errorf("W must not pin timeframe, got %q", p.Timeframe)
+		}
+	default:
+		t.Fatal("SavePreset was not called")
+	}
+}
+
+func TestSavePresetRefusesEntityScope(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SavePreset = func(p NamedPreset) error {
+		t.Errorf("SavePreset called with %+v", p)
+		return nil
+	}
+	tv := a.top().(*tableView)
+	tv.facets = []catalog.Facet{{Field: "loglevel", Value: "ERROR"}}
+	tv.scope.Entity = &catalog.Entity{ID: "K8S_POD-0000000000000001", Name: "checkout-1", Type: "K8S_POD"}
+	press(a, key("W"))
+	if a.overlay != nil {
+		t.Fatalf("save overlay opened despite entity scope: %T", a.overlay)
+	}
+}
+
+func TestPresetPickerDeletesPersonal(t *testing.T) {
+	a := testApp(t, "home")
+	deleted := make(chan string, 1)
+	a.opts.DeletePreset = func(name string) error {
+		deleted <- name
+		return nil
+	}
+	a.workspacePresets = map[string]NamedPreset{
+		"payments-errors": {
+			Name:   "payments-errors",
+			View:   "logs",
+			Facets: []catalog.Facet{{Field: "loglevel", Value: "ERROR"}},
+		},
+	}
+	a.presets = map[string]NamedPreset{
+		"payments-errors": {
+			Name:     "payments-errors",
+			View:     "logs",
+			Facets:   []catalog.Facet{{Field: "loglevel", Value: "WARN"}},
+			Personal: true,
+		},
+		"checkout-pods": {
+			Name:     "checkout-pods",
+			View:     "pods",
+			Facets:   []catalog.Facet{{Field: "k8s.namespace.name", Value: "checkout"}},
+			Personal: true,
+		},
+	}
+	deliver(a, a.applyNamedPreset(""))
+	overlayAs[*presetPicker](t, a)
+	press(a, key("d")) // sorted: checkout-pods first
+	select {
+	case name := <-deleted:
+		if name != "checkout-pods" {
+			t.Errorf("deleted %q, want checkout-pods", name)
+		}
+	default:
+		t.Fatal("DeletePreset was not called")
+	}
+	if _, ok := a.presets["checkout-pods"]; ok {
+		t.Fatal("checkout-pods still in memory")
+	}
+	press(a, key("d")) // remaining personal overlay
+	if got := a.presets["payments-errors"]; got.Personal || got.Facets[0].Value != "ERROR" {
+		t.Errorf("expected workspace restore, got %+v", got)
+	}
+}
+
+func TestPresetPickerDoesNotDeleteWorkspace(t *testing.T) {
+	a := testApp(t, "home")
+	a.opts.DeletePreset = func(name string) error {
+		t.Errorf("DeletePreset(%q) must not run for workspace presets", name)
+		return nil
+	}
+	a.presets = map[string]NamedPreset{
+		"payments-errors": {
+			Name:   "payments-errors",
+			View:   "logs",
+			Facets: []catalog.Facet{{Field: "loglevel", Value: "ERROR"}},
+		},
+	}
+	deliver(a, a.applyNamedPreset(""))
+	overlayAs[*presetPicker](t, a)
+	press(a, key("d"))
+	if _, ok := a.presets["payments-errors"]; !ok {
+		t.Fatal("workspace preset was removed")
+	}
+	if _, ok := a.overlay.(*presetPicker); !ok {
+		t.Fatalf("picker closed: %T", a.overlay)
 	}
 }

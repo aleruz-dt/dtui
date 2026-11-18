@@ -22,6 +22,10 @@ type NamedPreset struct {
 	Timeframe string
 	Facets    []catalog.Facet
 	Searches  []string
+	// Personal is true when this copy lives in ~/.local/state/dtui/presets.yaml
+	// and can be deleted from the TUI / delete-preset. Workspace (.dtui.yaml)
+	// presets stay false.
+	Personal bool
 }
 
 // requestSavePresetMsg asks the app to prompt for a name and persist the
@@ -87,6 +91,7 @@ func (o *presetSaveOverlay) HandleKey(msg tea.KeyMsg) tea.Cmd {
 			Timeframe: o.tf,
 			Facets:    o.facets,
 			Searches:  o.searches,
+			Personal:  true,
 		}
 		if err := o.app.opts.SavePreset(p); err != nil {
 			o.err = err.Error()
@@ -120,7 +125,7 @@ func (o *presetSaveOverlay) View(width, height int) string {
 		parts = append(parts, "⌕"+s)
 	}
 	b.WriteString("\n " + theme.Dim.Render(strings.Join(parts, "  ")) + "\n")
-	b.WriteString("\n" + theme.Dim.Render("writes ~/.local/state/dtui/presets.yaml — not .dtui.yaml"))
+	b.WriteString("\n" + theme.Dim.Render("writes ~/.local/state/dtui/presets.yaml — not .dtui.yaml; does not pin the session timeframe"))
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Position(0.2),
 		theme.OverlayBox.Render(b.String()))
 }
@@ -159,7 +164,7 @@ func (a *app) openPresetPicker() tea.Cmd {
 }
 
 func (p *presetPicker) Hints() []keyHint {
-	return []keyHint{{"enter", "open"}, {"j/k", "move"}, {"esc", "cancel"}}
+	return []keyHint{{"enter", "open"}, {"d", "delete personal"}, {"j/k", "move"}, {"esc", "cancel"}}
 }
 
 func (p *presetPicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
@@ -177,6 +182,11 @@ func (p *presetPicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		return a.applyNamedPreset(names[p.sel])
+	case "d", "ctrl+x", "delete":
+		if p.sel >= n || p.sel < 0 {
+			return nil
+		}
+		return a.deleteNamedPreset(names[p.sel], p)
 	}
 	if moveSel(key, &p.sel, n) {
 		return nil
@@ -207,8 +217,39 @@ func (p *presetPicker) View(width, height int) string {
 			theme.Badge.Render(pad(pr.View, viewW)) + " " +
 			theme.Dim.Render(pad(pr.narrowing(), narrW))
 	})
-	b.WriteString("\n" + theme.Dim.Render("enter open · j/k move · W in the facet manager saves"))
+	b.WriteString("\n" + theme.Dim.Render("enter open · d delete personal · j/k move · W saves"))
 	return centerOverlay(width, height, b.String())
+}
+
+func (a *app) deleteNamedPreset(name string, picker *presetPicker) tea.Cmd {
+	p, ok := a.presets[name]
+	if !ok {
+		return nil
+	}
+	if !p.Personal {
+		return statusErr(fmt.Sprintf("preset %s is in .dtui.yaml — edit that file", name))
+	}
+	if a.opts.DeletePreset == nil {
+		return statusErr("preset delete is not wired in this session")
+	}
+	if err := a.opts.DeletePreset(name); err != nil {
+		return statusErr(err.Error())
+	}
+	delete(a.presets, name)
+	msg := fmt.Sprintf("deleted preset %s", name)
+	if wp, ok := a.workspacePresets[name]; ok {
+		a.presets[name] = wp
+		msg = fmt.Sprintf("deleted personal overlay — workspace %s remains", name)
+	}
+	names := a.presetNames()
+	if len(names) == 0 {
+		a.overlay = nil
+		return status(msg)
+	}
+	if picker.sel >= len(names) {
+		picker.sel = len(names) - 1
+	}
+	return status(msg)
 }
 
 func (a *app) applyNamedPreset(name string) tea.Cmd {

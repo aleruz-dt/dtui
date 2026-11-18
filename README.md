@@ -232,11 +232,12 @@ dtui --preset payments-errors   # named facet preset (from .dtui.yaml or persona
 dtui logs --facet loglevel=ERROR
 dtui list-presets
 dtui --context prod list-presets
+dtui delete-preset payments-errors
 ```
 
 Press `?` inside the TUI for the full key reference, `:` to browse views, and
 `q` to quit. `:preset` lists saved facet presets (name, target view, filters);
-`:preset <name>` opens one. dtui refuses to start without a terminal (or inside an AI-agent
+`:preset <name>` opens one; `d` in that list deletes a personal save (`dtui delete-preset` is the CLI form). dtui refuses to start without a terminal (or inside an AI-agent
 environment): it is interactive only. It keeps its own UI state (navigation
 history) under `~/.local/state/dtui/`.
 

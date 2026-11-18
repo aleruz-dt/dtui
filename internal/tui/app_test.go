@@ -263,7 +263,7 @@ func TestNavigateMsg(t *testing.T) {
 			t.Fatalf("should still navigate on the safe facet, top = %T", a.top())
 		}
 		for _, f := range tv.facets {
-			if strings.ContainsAny(f.Field, "`|\n\r") {
+			if !catalog.SafeFacetField(f.Field) {
 				t.Errorf("unsafe facet field survived: %q", f.Field)
 			}
 		}
