@@ -295,10 +295,7 @@ var historyCodecs = []historyCodec{
 		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
 			v := newQueryView(a.ds, ref.DQL, tf, a.qhist)
 			if ref.DQL != "" {
-				// Arrive on results, not the editor: Init re-runs a submitted query.
-				v.current = ref.DQL
-				v.editing = false
-				v.editor.Blur()
+				v.submitted(ref.DQL)
 			}
 			return v, nil
 		}},

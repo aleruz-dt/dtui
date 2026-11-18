@@ -36,8 +36,7 @@ var (
 	cfgFile     string
 	contextName string
 	noAgent     bool
-	presetName  string
-	facetFlags  []string
+	launch      launchFlags
 )
 
 var rootCmd = &cobra.Command{
@@ -82,6 +81,16 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
   dtui nav SERVICE
   dtui nav payments
 
+  # A second word works as in the command bar: a trace id, a table filter
+  dtui trace 4bf92f3577b34da6a3ce929d0e0e4736
+  dtui pods checkout
+
+  # Hand over an investigation: window, server-side narrowing, or DQL
+  dtui logs --from 2026-01-02T14:00Z --to 2026-01-02T15:00Z --facet loglevel=ERROR --search timeout
+  dtui problems --timeframe 24h
+  dtui query --dql 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'
+  dtui query --dql-file investigation.dql
+
   # Launch against a specific context (session-local, never persisted)
   dtui --context prod
 
@@ -124,11 +133,11 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			view = args[0]
 		}
 		if len(args) == 2 {
-			// Only the navigator takes an argument (`dtui nav <type|id|name>`,
-			// smartscape-navigator.md) — everywhere else the second word is a
-			// mistake worth naming.
-			if !isNavView(view) {
-				return fmt.Errorf("only nav takes an argument (dtui nav <type|id|name>); %q does not", view)
+			// The second word means what it means after the view in the
+			// command bar: nav routes it, :trace opens a waterfall, a table
+			// pre-fills its filter. Home and the query editor take none.
+			if err := checkViewArg(view); err != nil {
+				return err
 			}
 			viewArg = args[1]
 		}
@@ -151,12 +160,15 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			wsWarnings = append(wsWarnings, personalWarn)
 		}
 		presetCatalog := workspace.MergePresetCatalog(ws, personal)
-		narrow, err := resolveLaunchNarrowing(cliView, presetCatalog, presetName, facetFlags)
+		narrow, err := resolveLaunchNarrowing(cliView, presetCatalog, launch)
 		if err != nil {
 			return err
 		}
 		if narrow.view != "" {
 			view = narrow.view
+		}
+		if view == "trace" && viewArg != "" && (len(narrow.facets) > 0 || len(narrow.searches) > 0) {
+			return fmt.Errorf("dtui trace <id> opens the trace waterfall; --facet/--search/--preset do not apply")
 		}
 
 		// Only an explicit CLI argument can still be unknown here (the
@@ -182,6 +194,9 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			Contexts:         contextNames(cfg),
 			InitialView:      view,
 			InitialArg:       viewArg,
+			InitialDQL:       narrow.dql,
+			InitialFrom:      narrow.from,
+			InitialTo:        narrow.to,
 			InitialFacets:    narrow.facets,
 			InitialSearches:  narrow.searches,
 			HistoryPath:      historyPath(),
@@ -452,6 +467,19 @@ func isNavView(name string) bool {
 	return false
 }
 
+// checkViewArg rejects a positional argument on views whose command-bar
+// form takes none.
+func checkViewArg(view string) error {
+	switch view {
+	case "home", "query", "dql":
+		return fmt.Errorf("%s takes no argument (use dtui query --dql '…' for a query)", view)
+	}
+	if isNavView(view) || catalog.Lookup(view) != nil {
+		return nil
+	}
+	return fmt.Errorf("unknown view %q", view)
+}
+
 func viewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -487,8 +515,14 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "dtctl config file (searches .dtctl.yaml upward, then $XDG_CONFIG_HOME/dtctl/config; env: DTCTL_CONFIG)")
 	rootCmd.PersistentFlags().StringVar(&contextName, "context", "", "use a specific context for this session (env: DTCTL_CONTEXT; not persisted)")
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "launch even if an AI agent environment is detected")
-	rootCmd.Flags().StringVar(&presetName, "preset", "", "named facet preset from .dtui.yaml or this context's personal presets (session-local; not auto-applied)")
-	rootCmd.Flags().StringArrayVar(&facetFlags, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
+	rootCmd.Flags().StringVar(&launch.preset, "preset", "", "named facet preset from .dtui.yaml or this context's personal presets (session-local; not auto-applied)")
+	rootCmd.Flags().StringArrayVar(&launch.facets, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
+	rootCmd.Flags().StringArrayVar(&launch.searches, "search", nil, "server-side text search on the starting view (repeatable)")
+	rootCmd.Flags().StringVar(&launch.timeframe, "timeframe", "", "relative starting window: 45m, 2h, 7d")
+	rootCmd.Flags().StringVar(&launch.from, "from", "", "absolute window start, RFC 3339 with a zone (2026-01-02T15:04Z)")
+	rootCmd.Flags().StringVar(&launch.to, "to", "", "absolute window end (default: now); requires --from")
+	rootCmd.Flags().StringVar(&launch.dql, "dql", "", "open the query view running this DQL")
+	rootCmd.Flags().StringVar(&launch.dqlFile, "dql-file", "", "open the query view running the DQL in this file")
 	_ = rootCmd.RegisterFlagCompletionFunc("preset", presetCompletion)
 
 	// dtctl reserves -v for --verbose; keep the long form only.

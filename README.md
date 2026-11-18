@@ -230,6 +230,12 @@ dtui pods             # jump straight into a view
 dtui --context prod   # session-local override, never persisted
 dtui --preset payments-errors   # named facet preset (from .dtui.yaml or personal save)
 dtui logs --facet loglevel=ERROR
+dtui logs --search timeout --timeframe 24h      # server-side search, relative window
+dtui logs --from 2026-01-02T14:00Z --to 2026-01-02T15:00Z   # absolute window (zone required)
+dtui trace 4bf92f3577b34da6a3ce929d0e0e4736     # a second word works as in the command bar
+dtui pods checkout                              # … here, the table filter
+dtui query --dql 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'   # runs on launch
+dtui query --dql-file investigation.dql
 dtui list-presets
 dtui --context prod list-presets
 dtui delete-preset payments-errors
@@ -238,7 +244,10 @@ dtui delete-preset payments-errors
 Press `?` inside the TUI for the full key reference, `:` to browse views, and
 `q` to quit. `:preset` lists saved facet presets (name, target view, filters);
 `:preset <name>` opens one; `d` in that list deletes a personal save (`dtui delete-preset` is the CLI form). dtui refuses to start without a terminal (or inside an AI-agent
-environment): it is interactive only. It keeps its own UI state (navigation
+environment): it is interactive only. An agent that has investigated something
+with dtctl can still hand you the evidence: the launch flags above are a stable
+contract for a command you paste and run yourself
+([ADR-0018](docs/adr/0018-launch-flags-are-a-handoff-contract.md)). It keeps its own UI state (navigation
 history) under `~/.local/state/dtui/`.
 
 Contexts and credentials are managed with dtctl; a `--context` flag or
