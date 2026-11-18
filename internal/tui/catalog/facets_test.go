@@ -254,11 +254,41 @@ func TestBucketEligible(t *testing.T) {
 		// summarize aggregates the field away; a fields projection drops it.
 		{"fetch security.events, from:now() - 2h\n| summarize x = count(), by:{id}\n| limit 100", false},
 		{"fetch logs, from:now() - 2h\n| fields timestamp, content\n| limit 100", false},
+		// A hand-typed one-liner (query editor, dtui --dql) is judged per stage.
+		{"fetch logs, from:now()-30m | summarize count(), by:{loglevel}", false},
+		{"fetch logs | fields timestamp", false},
+		{"fetch logs, from:now()-30m | filter content == \"a | summarize b\"", true},
 	}
 	for _, tt := range tests {
 		if got := BucketEligible(tt.dql); got != tt.want {
 			t.Errorf("BucketEligible(%q) = %v, want %v", tt.dql, got, tt.want)
 		}
+	}
+}
+
+func TestStageLines(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"fetch logs | filter a == 1 | limit 5", "fetch logs\n| filter a == 1\n| limit 5"},
+		{"fetch logs\n  | sort timestamp desc\n| limit 5", "fetch logs\n| sort timestamp desc\n| limit 5"},
+		{`fetch logs | filter content == "x | y" | limit 1`, "fetch logs\n| filter content == \"x | y\"\n| limit 1"},
+		{`fetch logs | filter content == "q\"|" | limit 1`, "fetch logs\n| filter content == \"q\\\"|\"\n| limit 1"},
+		{"fetch logs | fieldsAdd `a|b` = 1", "fetch logs\n| fieldsAdd `a|b` = 1"},
+		{"fetch logs // tail | head\n| limit 1", "fetch logs // tail | head\n| limit 1"},
+	}
+	for _, tt := range tests {
+		if got := StageLines(tt.in); got != tt.want {
+			t.Errorf("StageLines(%q)\n got %q\nwant %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// A one-liner keeps injected stages before its summarize: the bucket
+// projection is dropped and searches land right after the source.
+func TestComposeQueryOneLiner(t *testing.T) {
+	got := ComposeQuery("fetch logs, from:now()-30m | summarize count(), by:{loglevel}", []string{"timeout"}, nil, true)
+	want := "fetch logs, from:now()-30m\n| search \"*timeout*\"\n| summarize count(), by:{loglevel}"
+	if got != want {
+		t.Errorf("ComposeQuery one-liner\n got %q\nwant %q", got, want)
 	}
 }
 

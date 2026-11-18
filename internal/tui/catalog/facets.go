@@ -317,6 +317,55 @@ var bucketTables = map[string]bool{
 	"dt.system.events": true,
 }
 
+// StageLines puts every top-level pipeline stage on its own line. Query
+// composition splices stages by line, so a hand-typed one-liner
+// (`fetch logs | summarize …`, the query editor, `dtui --dql`) would get its
+// injected stages after the summarize. Pipes inside strings, backtick
+// identifiers and // comments are not stage boundaries.
+func StageLines(dql string) string {
+	var out []string
+	var cur strings.Builder
+	flush := func() {
+		if s := strings.TrimSpace(cur.String()); s != "" {
+			out = append(out, s)
+		}
+		cur.Reset()
+	}
+	var quote rune // '"' or '`' while inside a literal
+	comment, escaped := false, false
+	for _, r := range dql {
+		switch {
+		case comment:
+			if r == '\n' {
+				comment = false
+				flush()
+				continue
+			}
+		case quote != 0:
+			switch {
+			case escaped:
+				escaped = false
+			case r == '\\' && quote == '"':
+				escaped = true
+			case r == quote:
+				quote = 0
+			}
+		case r == '"' || r == '`':
+			quote = r
+		case r == '/' && strings.HasSuffix(cur.String(), "/"):
+			comment = true
+		case r == '\n':
+			flush()
+			continue
+		case r == '|':
+			flush()
+		}
+		cur.WriteRune(r)
+	}
+	flush()
+	return strings.Join(out, "\n")
+}
+
 // sourceTable returns the table a query's first line fetches ("" when the
 // source is not a fetch command).
 func sourceTable(dql string) string {
@@ -334,6 +383,7 @@ func sourceTable(dql string) string {
 // drops the field (summarize aggregates it away, a fields projection
 // excludes it).
 func BucketEligible(dql string) bool {
+	dql = StageLines(dql)
 	table := sourceTable(dql)
 	if table == "" {
 		return false
@@ -370,6 +420,7 @@ func BucketEligible(dql string) bool {
 // FIELD_DOES_NOT_EXIST (validated live on an Azure-enabled tenant: HOST/AZURE/K8S, 2026-07-24).
 // The bucket | fieldsAdd is additive, so the tag maps still reach the filter.
 func ComposeQuery(dql string, searches []string, facets []Facet, projectBucket bool) string {
+	dql = StageLines(dql)
 	var bucketFacets []Facet
 	var mapFacets []string // must land before | fields / | summarize projections
 	var tail []string
