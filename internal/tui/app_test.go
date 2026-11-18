@@ -191,16 +191,19 @@ func TestLaunchOptionsLandOnTheFirstPage(t *testing.T) {
 	})
 
 	t.Run("dql arrives submitted", func(t *testing.T) {
-		a := launch(t, Options{InitialView: "query", InitialDQL: "fetch logs | limit 5"})
+		dql := "fetch logs, from:now()-30m | summarize count(), by:{loglevel}"
+		a := launch(t, Options{InitialView: "query", InitialDQL: dql})
 		var ran []string
 		a.ds.runFn = func(q string) ([]map[string]any, error) { ran = append(ran, q); return nil, nil }
 		qv, ok := a.top().(*queryView)
-		if !ok || qv.editing || qv.DQL() != "fetch logs | limit 5" {
+		if !ok || qv.editing || qv.DQL() != dql {
 			t.Fatalf("top = %T, want the query view on results", a.top())
 		}
 		deliver(a, a.Init())
-		if len(ran) == 0 || !strings.Contains(ran[0], "fetch logs | limit 5") {
-			t.Errorf("launch DQL did not run; ran %q", ran)
+		// A one-liner must not get the bucket projection after its summarize
+		// (FIELD_DOES_NOT_EXIST on the tenant).
+		if len(ran) == 0 || ran[0] != "fetch logs, from:now()-30m\n| summarize count(), by:{loglevel}" {
+			t.Errorf("launch DQL ran as %q", ran)
 		}
 	})
 
