@@ -325,6 +325,18 @@ dtctl tui pods           # launch directly into a view (any alias works)
 dtctl tui --context prod # launch against a specific context
 ```
 
+Launch flags narrow the first page — the handoff contract of
+[ADR-0018](../adr/0018-launch-flags-are-a-handoff-contract.md), so an agent
+can hand a user one command that opens on its evidence:
+
+| Flag / argument | Effect |
+|---|---|
+| `<view> <arg>` | the command-bar meaning: `nav` routes it, `trace <id>` opens the waterfall, a table pre-fills its filter; home and query take none |
+| `--timeframe 2h` | relative window (overrides a preset's and `.dtui.yaml`'s) |
+| `--from` / `--to` | absolute window, RFC 3339 with a zone; `--to` defaults to now; the header reads `window … UTC` |
+| `--facet f=v`, `--search t` | server-side narrowing, repeatable, merged onto `--preset`; DQL catalog tables only |
+| `--dql` / `--dql-file` | the query view, already running; the window belongs in the query (`from:`), so the window flags are rejected with it |
+
 Guards, checked before entering the alternate screen: not a TTY → error; agent
 mode → structured error envelope (`"ui is interactive-only"`); `--plain` →
 error suggesting non-interactive equivalents.

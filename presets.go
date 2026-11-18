@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/adrg/xdg"
 	"github.com/spf13/cobra"
@@ -104,18 +105,32 @@ func writeLoadWarnings(w io.Writer, warnings []string) {
 	}
 }
 
-// launchNarrowing is the resolved --preset / --facet input applied to the
-// first catalog table. Empty fields mean "not set".
+// launchFlags is the raw CLI narrowing of the starting page.
+type launchFlags struct {
+	preset    string
+	facets    []string
+	searches  []string
+	timeframe string
+	from, to  string
+	dql       string
+	dqlFile   string
+}
+
+// launchNarrowing is the resolved launch input applied to the first page.
+// Empty fields mean "not set"; a non-zero from wins over tf.
 type launchNarrowing struct {
 	view     string
 	tf       string
+	from, to time.Time
 	facets   []catalog.Facet
 	searches []string
+	dql      string
 }
 
-func resolveLaunchNarrowing(cliView string, ws *workspace.Workspace, presetName string, facetFlags []string) (launchNarrowing, error) {
+func resolveLaunchNarrowing(cliView string, ws *workspace.Workspace, f launchFlags) (launchNarrowing, error) {
 	var n launchNarrowing
 	n.view = cliView
+	presetName := f.preset
 
 	if presetName != "" {
 		if ws == nil || len(ws.Presets) == 0 {
@@ -148,23 +163,133 @@ func resolveLaunchNarrowing(cliView string, ws *workspace.Workspace, presetName 
 		n.searches = append([]string{}, p.Searches...)
 	}
 
-	extra, err := parseFacetFlags(facetFlags)
+	extra, err := parseFacetFlags(f.facets)
 	if err != nil {
 		return n, err
 	}
 	n.facets = mergeFacets(n.facets, extra)
+	searches, err := parseSearchFlags(f.searches)
+	if err != nil {
+		return n, err
+	}
+	n.searches = append(n.searches, searches...)
 	if presetName == "" && len(extra) > 0 && n.view == "" {
 		return n, fmt.Errorf("--facet requires a view argument (e.g. dtui logs --facet loglevel=ERROR)")
 	}
-	if n.view != "" && (presetName != "" || len(n.facets) > 0) {
+	if presetName == "" && len(searches) > 0 && n.view == "" {
+		return n, fmt.Errorf("--search requires a view argument (e.g. dtui logs --search timeout)")
+	}
+	if n.view != "" && (presetName != "" || len(n.facets) > 0 || len(n.searches) > 0) {
 		if err := requireFacetTable(n.view); err != nil {
 			return n, err
 		}
 	}
+
+	if err := resolveLaunchWindow(&n, f); err != nil {
+		return n, err
+	}
+	if err := resolveLaunchDQL(&n, f); err != nil {
+		return n, err
+	}
+
 	if n.view != "" && catalog.Lookup(n.view) == nil && !isBespokeView(n.view) && !isNavView(n.view) {
 		return n, fmt.Errorf("unknown view %q", n.view)
 	}
 	return n, nil
+}
+
+// resolveLaunchWindow applies --timeframe or --from/--to; either wins over a
+// preset's timeframe.
+func resolveLaunchWindow(n *launchNarrowing, f launchFlags) error {
+	if f.timeframe != "" && (f.from != "" || f.to != "") {
+		return fmt.Errorf("--timeframe and --from/--to are mutually exclusive")
+	}
+	if f.timeframe != "" {
+		if _, ok := catalog.ParseTimeframe(f.timeframe); !ok {
+			return fmt.Errorf("--timeframe %q: expected a relative window like 45m, 2h, 7d", f.timeframe)
+		}
+		n.tf = f.timeframe
+		return nil
+	}
+	if f.to != "" && f.from == "" {
+		return fmt.Errorf("--to requires --from")
+	}
+	if f.from == "" {
+		return nil
+	}
+	from, err := parseLaunchTime("--from", f.from)
+	if err != nil {
+		return err
+	}
+	var to time.Time
+	if f.to != "" {
+		if to, err = parseLaunchTime("--to", f.to); err != nil {
+			return err
+		}
+		if !to.After(from) {
+			return fmt.Errorf("--to %s must be after --from %s", f.to, f.from)
+		}
+	}
+	n.tf, n.from, n.to = "", from, to
+	return nil
+}
+
+// launchTimeLayouts are the accepted --from/--to forms. A zone is required:
+// a handed-over command must mean the same instant on every machine.
+var launchTimeLayouts = []string{time.RFC3339Nano, "2006-01-02T15:04Z07:00"}
+
+func parseLaunchTime(flag, s string) (time.Time, error) {
+	for _, layout := range launchTimeLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%s %q: expected RFC 3339 with a zone (2026-01-02T15:04Z or 2026-01-02T15:04:05+01:00)", flag, s)
+}
+
+// resolveLaunchDQL applies --dql / --dql-file: they open the query editor
+// with the query already running.
+func resolveLaunchDQL(n *launchNarrowing, f launchFlags) error {
+	if f.dql == "" && f.dqlFile == "" {
+		return nil
+	}
+	if f.dql != "" && f.dqlFile != "" {
+		return fmt.Errorf("--dql and --dql-file are mutually exclusive")
+	}
+	if f.preset != "" {
+		return fmt.Errorf("--dql cannot be combined with --preset")
+	}
+	if n.view != "" && canonicalViewName(n.view) != "query" {
+		return fmt.Errorf("--dql opens the query view, not %s", n.view)
+	}
+	if n.tf != "" || !n.from.IsZero() {
+		return fmt.Errorf("--dql ignores --timeframe/--from/--to; put from:/to: in the query instead")
+	}
+	dql := f.dql
+	if f.dqlFile != "" {
+		data, err := os.ReadFile(f.dqlFile)
+		if err != nil {
+			return fmt.Errorf("--dql-file: %w", err)
+		}
+		dql = string(data)
+	}
+	if strings.TrimSpace(dql) == "" {
+		return fmt.Errorf("--dql: query is empty")
+	}
+	n.view, n.dql = "query", strings.TrimSpace(dql)
+	return nil
+}
+
+func parseSearchFlags(flags []string) ([]string, error) {
+	out := make([]string, 0, len(flags))
+	for _, s := range flags {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil, fmt.Errorf("--search: term is empty")
+		}
+		out = append(out, s)
+	}
+	return out, nil
 }
 
 // requireFacetTable rejects views that cannot apply server-side facets: the

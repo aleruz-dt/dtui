@@ -30,9 +30,14 @@ type Options struct {
 	// package so no HTTP lives in this package.
 	Sources     map[string]Source
 	InitialView string // catalog view name or alias; "" = problems
-	// InitialArg is the optional CLI argument for the initial view — only
-	// nav takes one (`dtui nav <type|id|name>`); ignored elsewhere.
+	// InitialArg is the optional CLI argument for the initial view, with the
+	// command bar's meaning: nav routes it (`dtui nav <type|id|name>`),
+	// "trace" opens the waterfall for that trace id, a catalog table
+	// pre-fills its filter (`dtui pods checkout`).
 	InitialArg string
+	// InitialDQL opens the query view on this DQL, already submitted
+	// (`dtui query --dql`). Ignored when the initial view is not query.
+	InitialDQL string
 	// InitialFacets and InitialSearches are server-side narrowing applied to
 	// the first catalog table (CLI --preset / --facet). Ignored when the
 	// initial view is not a table.
@@ -76,6 +81,9 @@ type Options struct {
 	WorkspacePrimaryTags []string
 	// InitialTimeframe is the workspace default window ("" = built-in 2h).
 	InitialTimeframe string
+	// InitialFrom/InitialTo pin an absolute startup window (CLI --from/--to)
+	// and win over InitialTimeframe. A zero InitialTo is open-ended.
+	InitialFrom, InitialTo time.Time
 	// StartupNotice is a one-line message shown on launch — how a committed
 	// .dtui.yaml announces it is steering the session (or failed to).
 	StartupNotice    string
@@ -253,6 +261,9 @@ func newApp(opts Options) (*app, error) {
 	if tf, ok := catalog.ParseTimeframe(opts.InitialTimeframe); ok {
 		a.tf = tf
 	}
+	if !opts.InitialFrom.IsZero() {
+		a.tf = catalog.AbsoluteTimeframe(opts.InitialFrom, opts.InitialTo, time.Now())
+	}
 	// Seed ds.primaryTags from the global workspace keys so tables opened
 	// before workspace segments resolve still project the columns.
 	a.updatePrimaryTags()
@@ -261,9 +272,25 @@ func newApp(opts Options) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	// `dtui nav <arg>` — same routing as the :nav command-bar argument.
-	if _, isNav := initial.(*navView); isNav && strings.TrimSpace(opts.InitialArg) != "" {
-		initial = a.navViewFor(strings.TrimSpace(opts.InitialArg))
+	arg := strings.TrimSpace(opts.InitialArg)
+	switch v := initial.(type) {
+	case *navView:
+		// `dtui nav <arg>` — same routing as the :nav command-bar argument.
+		if arg != "" {
+			initial = a.navViewFor(arg)
+		}
+	case *queryView:
+		if dql := strings.TrimSpace(opts.InitialDQL); dql != "" {
+			v.submitted(dql)
+		}
+	case *tableView:
+		// `dtui trace <id>` — the :trace command-bar form; any other
+		// table argument pre-fills the filter, as `:pods checkout` does.
+		if arg != "" && opts.InitialView == "trace" {
+			initial = newWaterfallView(a.ds, arg, "", a.tf, time.Time{})
+		} else if arg != "" {
+			v.setFilter(arg)
+		}
 	}
 	if tv, ok := initial.(*tableView); ok {
 		if len(opts.InitialFacets) > 0 {
@@ -1111,7 +1138,11 @@ func (a *app) renderHeader() string {
 	if iv := refreshIntervals[a.refreshIdx]; iv > 0 {
 		right = append(right, theme.StatusOK.Render("⟳ "+iv.String()))
 	}
-	right = append(right, theme.HeaderKey.Render("last ")+theme.HeaderVal.Render(a.tf.Label))
+	tfKey := "last "
+	if a.tf.Absolute() {
+		tfKey = "window "
+	}
+	right = append(right, theme.HeaderKey.Render(tfKey)+theme.HeaderVal.Render(a.tf.Label))
 
 	l := strings.Join(left, sep)
 	r := strings.Join(right, sep) + " "

@@ -163,6 +163,61 @@ func TestInitialFacetsFromOptions(t *testing.T) {
 	}
 }
 
+func TestLaunchOptionsLandOnTheFirstPage(t *testing.T) {
+	launch := func(t *testing.T, opts Options) *app {
+		t.Helper()
+		opts.ContextName, opts.SafetyLevel = "test", "readonly"
+		a, err := newApp(opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.ds.runFn = func(string) ([]map[string]any, error) { return nil, nil }
+		a.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+		return a
+	}
+
+	t.Run("table argument pre-fills the filter", func(t *testing.T) {
+		tv, ok := launch(t, Options{InitialView: "pods", InitialArg: "checkout"}).top().(*tableView)
+		if !ok || tv.filter != "checkout" {
+			t.Fatalf("top = %T, want pods filtered by checkout", tv)
+		}
+	})
+
+	t.Run("trace argument opens the waterfall", func(t *testing.T) {
+		wv, ok := launch(t, Options{InitialView: "trace", InitialArg: "4bf92f3577b34da6a3ce929d0e0e4736"}).top().(*waterfallView)
+		if !ok || wv.traceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+			t.Fatalf("top = %T, want the waterfall for the trace", wv)
+		}
+	})
+
+	t.Run("dql arrives submitted", func(t *testing.T) {
+		a := launch(t, Options{InitialView: "query", InitialDQL: "fetch logs | limit 5"})
+		var ran []string
+		a.ds.runFn = func(q string) ([]map[string]any, error) { ran = append(ran, q); return nil, nil }
+		qv, ok := a.top().(*queryView)
+		if !ok || qv.editing || qv.DQL() != "fetch logs | limit 5" {
+			t.Fatalf("top = %T, want the query view on results", a.top())
+		}
+		deliver(a, a.Init())
+		if len(ran) == 0 || !strings.Contains(ran[0], "fetch logs | limit 5") {
+			t.Errorf("launch DQL did not run; ran %q", ran)
+		}
+	})
+
+	t.Run("absolute window scopes the query and the header", func(t *testing.T) {
+		from := time.Date(2026, 1, 2, 14, 0, 0, 0, time.UTC)
+		a := launch(t, Options{InitialView: "logs", InitialFrom: from, InitialTo: from.Add(time.Hour),
+			InitialTimeframe: "24h"})
+		tv := a.top().(*tableView)
+		if dql := tv.composeDQL(); !strings.Contains(dql, `toTimestamp("2026-01-02T14:00:00.000Z"), to:toTimestamp("2026-01-02T15:00:00.000Z")`) {
+			t.Errorf("logs query not bounded by the launch window:\n%s", dql)
+		}
+		if header := a.View(); !strings.Contains(header, "window 2026-01-02 14:00→15:00 UTC") {
+			t.Errorf("header does not show the absolute window:\n%s", header)
+		}
+	})
+}
+
 // TestNavigateMsg drives the external deep-link entry point (the wasm host's
 // dtuiNavigate): a NavigateMsg must open the named view with the requested
 // facet composed into the server-side query, and the "trace" pseudo-target must

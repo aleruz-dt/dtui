@@ -65,6 +65,15 @@ func newQueryView(ds *dataSource, dql string, tf catalog.Timeframe, hist *queryH
 	return v
 }
 
+// submitted lands the view on results for dql, as if the user had pressed
+// enter on it: Init then runs it (history restore, `dtui query --dql`).
+func (v *queryView) submitted(dql string) {
+	v.editor.SetValue(dql)
+	v.current = dql
+	v.editing = false
+	v.editor.Blur()
+}
+
 // Init re-runs an already-submitted query — fresh views never have one, but
 // a page restored from history arrives with current set and should come back
 // with results, not just editor text.
