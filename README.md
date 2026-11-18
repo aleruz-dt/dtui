@@ -130,7 +130,7 @@ credential store. Details in [docs/design/tui.md](docs/design/tui.md) and the
 
 | Key | Does |
 |---|---|
-| `:` | Command bar: jump to any view (`:pods`, `:svc`, `:logs error`, `:trace <id>`, `:ctx prod`) |
+| `:` | Command bar: jump to any view (`:pods`, `:svc`, `:logs error`, `:trace <id>`, `:query <dql>`, `:ctx prod`) |
 | `/` | Quick search in the current view |
 | `enter` | Open the detail page |
 | `l` `s` `m` `p` `v` `u` | Logs, traces, metrics, problems, events, SLOs, pre-scoped to the selection |
@@ -234,8 +234,9 @@ dtui logs --search timeout --timeframe 24h      # server-side search, relative w
 dtui logs --from 2026-01-02T14:00Z --to 2026-01-02T15:00Z   # absolute window (zone required)
 dtui trace 4bf92f3577b34da6a3ce929d0e0e4736     # a second word works as in the command bar
 dtui pods checkout                              # … here, the table filter
-dtui query --dql 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'   # runs on launch
-dtui query --dql-file investigation.dql
+dtui traces --lens genai                       # a view's lens
+dtui query 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'   # runs on launch, as dtctl query takes it
+dtui query -f investigation.dql                 # or --dql '…'
 dtui list-presets
 dtui --context prod list-presets
 dtui delete-preset payments-errors

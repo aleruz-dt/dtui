@@ -15,7 +15,7 @@ import (
 // testAppHist is testApp with a persistent history file.
 func testAppHist(t *testing.T, initial, histPath string) *app {
 	t.Helper()
-	a, err := newApp(Options{ContextName: "test", SafetyLevel: "readonly", InitialView: initial, HistoryPath: histPath})
+	a, err := newApp(Options{ContextName: "test", SafetyLevel: "readonly", Launch: NavigateMsg{Target: initial}, HistoryPath: histPath})
 	if err != nil {
 		t.Fatal(err)
 	}

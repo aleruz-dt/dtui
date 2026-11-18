@@ -30,7 +30,7 @@ func init() {
 
 func testApp(t *testing.T, initial string) *app {
 	t.Helper()
-	a, err := newApp(Options{ContextName: "test", SafetyLevel: "readonly", InitialView: initial})
+	a, err := newApp(Options{ContextName: "test", SafetyLevel: "readonly", Launch: NavigateMsg{Target: initial}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,11 +138,11 @@ func deliver(a *app, cmd tea.Cmd) {
 
 func TestInitialFacetsFromOptions(t *testing.T) {
 	a, err := newApp(Options{
-		ContextName:     "test",
-		SafetyLevel:     "readonly",
-		InitialView:     "logs",
-		InitialFacets:   []catalog.Facet{{Field: "loglevel", Value: "ERROR"}},
-		InitialSearches: []string{"timeout"},
+		ContextName: "test",
+		SafetyLevel: "readonly",
+		Launch: NavigateMsg{Target: "logs",
+			Facets:   []NavFacet{{Field: "loglevel", Value: "ERROR"}},
+			Searches: []string{"timeout"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -177,14 +177,14 @@ func TestLaunchOptionsLandOnTheFirstPage(t *testing.T) {
 	}
 
 	t.Run("table argument pre-fills the filter", func(t *testing.T) {
-		tv, ok := launch(t, Options{InitialView: "pods", InitialArg: "checkout"}).top().(*tableView)
+		tv, ok := launch(t, Options{Launch: NavigateMsg{Target: "pods", Filter: "checkout"}}).top().(*tableView)
 		if !ok || tv.filter != "checkout" {
 			t.Fatalf("top = %T, want pods filtered by checkout", tv)
 		}
 	})
 
 	t.Run("trace argument opens the waterfall", func(t *testing.T) {
-		wv, ok := launch(t, Options{InitialView: "trace", InitialArg: "4bf92f3577b34da6a3ce929d0e0e4736"}).top().(*waterfallView)
+		wv, ok := launch(t, Options{Launch: NavigateMsg{Target: "trace", ID: "4bf92f3577b34da6a3ce929d0e0e4736"}}).top().(*waterfallView)
 		if !ok || wv.traceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
 			t.Fatalf("top = %T, want the waterfall for the trace", wv)
 		}
@@ -192,7 +192,7 @@ func TestLaunchOptionsLandOnTheFirstPage(t *testing.T) {
 
 	t.Run("dql arrives submitted", func(t *testing.T) {
 		dql := "fetch logs, from:now()-30m | summarize count(), by:{loglevel}"
-		a := launch(t, Options{InitialView: "query", InitialDQL: dql})
+		a := launch(t, Options{Launch: NavigateMsg{Target: "query", DQL: dql}})
 		var ran []string
 		a.ds.runFn = func(q string) ([]map[string]any, error) { ran = append(ran, q); return nil, nil }
 		qv, ok := a.top().(*queryView)
@@ -207,9 +207,26 @@ func TestLaunchOptionsLandOnTheFirstPage(t *testing.T) {
 		}
 	})
 
+	t.Run("lens and preset map facets land on the table", func(t *testing.T) {
+		a := launch(t, Options{Launch: NavigateMsg{Target: "traces", Lens: "genai", Facets: []NavFacet{
+			{Field: "k8s.labels:app", Value: "checkout", MapField: "tags:k8s.labels", MapKey: "app"},
+			{Field: "x", Value: "y", MapField: "tags:`bad", MapKey: "app"},
+		}}})
+		tv := a.top().(*tableView)
+		if tv.spec.Lenses[tv.scope.Lens].Name != "genai" {
+			t.Errorf("lens = %d, want genai", tv.scope.Lens)
+		}
+		if len(tv.facets) != 1 || tv.facets[0].MapKey != "app" {
+			t.Errorf("facets = %+v, want only the safe map facet", tv.facets)
+		}
+		if !a.opts.StartupNoticeErr || !strings.Contains(a.opts.StartupNotice, "unsafe field") {
+			t.Errorf("dropped facet not announced: %q", a.opts.StartupNotice)
+		}
+	})
+
 	t.Run("absolute window scopes the query and the header", func(t *testing.T) {
 		from := time.Date(2026, 1, 2, 14, 0, 0, 0, time.UTC)
-		a := launch(t, Options{InitialView: "logs", InitialFrom: from, InitialTo: from.Add(time.Hour),
+		a := launch(t, Options{Launch: NavigateMsg{Target: "logs", From: from, To: from.Add(time.Hour)},
 			InitialTimeframe: "24h"})
 		tv := a.top().(*tableView)
 		if dql := tv.composeDQL(); !strings.Contains(dql, `toTimestamp("2026-01-02T14:00:00.000Z"), to:toTimestamp("2026-01-02T15:00:00.000Z")`) {
@@ -1001,7 +1018,7 @@ func TestQuitAndHelpKeys(t *testing.T) {
 }
 
 func TestUnknownInitialViewFails(t *testing.T) {
-	if _, err := newApp(Options{InitialView: "bogus"}); err == nil {
+	if _, err := newApp(Options{Launch: NavigateMsg{Target: "bogus"}}); err == nil {
 		t.Fatal("bogus initial view must error")
 	}
 }

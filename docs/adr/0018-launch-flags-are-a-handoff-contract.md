@@ -14,7 +14,7 @@ a handoff was prose ("press `:`, type …, set the timeframe to …").
 
 The root command's launch flags are a **stable contract for a command a human
 runs**: `<view> [arg]`, `--timeframe`, `--from`/`--to`, `--facet`, `--search`,
-`--preset`, `--dql`/`--dql-file`, `--context`.
+`--preset`, `--lens`, `query <dql>` / `--dql` / `-f`, `--context`.
 
 - Agents *emit* these commands; they never drive dtui. The TTY and agent
   guards are unchanged.

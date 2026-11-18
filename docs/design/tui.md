@@ -192,7 +192,7 @@ This is the heart of the design. Navigation has four mechanisms that compose:
 
 - `:` opens the command bar; typing fuzzy-matches view names and aliases
   (`:po` → pods, `:sv` → services) with an inline completion popup.
-- Arguments narrow the jump: `:logs error`, `:pods checkout`, `:trace <id>`,
+- Arguments narrow the jump: `:logs error`, `:pods checkout`, `:trace <id>`, `:query <dql>` (runs it),
   `:ctx prod-eu`, `:preset payments-errors`. A bare `:ctx` (no name) opens a picker over the configured
   contexts with the current one marked. Bare `:preset` lists saved names.
 - `:q` quits, `:help` opens the key reference.
@@ -329,15 +329,18 @@ dtctl tui --context prod # launch against a specific context
 
 Launch flags narrow the first page — the handoff contract of
 [ADR-0018](../adr/0018-launch-flags-are-a-handoff-contract.md), so an agent
-can hand a user one command that opens on its evidence:
+can hand a user one command that opens on its evidence. The CLI resolves them
+into the same `NavigateMsg` the browser build's deep links send, and both open
+their page through `launchView`:
 
 | Flag / argument | Effect |
 |---|---|
-| `<view> <arg>` | the command-bar meaning: `nav` routes it, `trace <id>` opens the waterfall, a table pre-fills its filter; home and query take none |
+| `<view> <arg>` | the command-bar meaning: `nav` routes it, `trace <id>` opens the waterfall, a table pre-fills its filter, `query` takes the DQL; home takes none |
 | `--timeframe 2h` | relative window (overrides a preset's and `.dtui.yaml`'s) |
 | `--from` / `--to` | absolute window, RFC 3339 with a zone; `--to` defaults to now; the header reads `window … UTC` |
 | `--facet f=v`, `--search t` | server-side narrowing, repeatable, merged onto `--preset`; DQL catalog tables only |
-| `--dql` / `--dql-file` | the query view, already running; the window belongs in the query (`from:`), so the window flags are rejected with it |
+| `query <dql>`, `--dql`, `-f/--file` | the query view, already running — the same three forms as `dtctl query` (`-f -` is rejected: dtui needs the terminal); the window belongs in the query (`from:`), so the window flags are rejected with it |
+| `--lens name` | open a catalog table on that lens (`traces --lens genai`); an unknown lens is an error listing the valid ones |
 
 Guards, checked before entering the alternate screen: not a TTY → error; agent
 mode → structured error envelope (`"ui is interactive-only"`); `--plain` →
@@ -381,7 +384,8 @@ with the existing live progress (scanned GB / records via the SDK's
 bar), and query history. Its main entrance is `ctrl-q` from any view —
 **reveal the query behind what you're looking at**, tweak it, and re-run. This
 is where curated navigation gracefully hands over to power users, and it makes
-the TUI a DQL *teacher*: every screen can show you how it was made.
+the TUI a DQL *teacher*: every screen can show you how it was made. `:query <dql>`
+and `dtui query '<dql>'` open it with a query already running.
 
 ### Strictly read-only
 

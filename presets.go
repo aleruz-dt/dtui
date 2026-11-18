@@ -110,97 +110,152 @@ type launchFlags struct {
 	preset    string
 	facets    []string
 	searches  []string
+	lens      string
 	timeframe string
 	from, to  string
 	dql       string
-	dqlFile   string
+	file      string
 }
 
-// launchNarrowing is the resolved launch input applied to the first page.
-// Empty fields mean "not set"; a non-zero from wins over tf.
-type launchNarrowing struct {
-	view     string
-	tf       string
-	from, to time.Time
-	facets   []catalog.Facet
-	searches []string
-	dql      string
-}
+// resolveLaunch turns the CLI view, its positional argument and the launch
+// flags into the first page — the same descriptor a deep link sends. The
+// argument keeps its command-bar meaning; a flag that cannot apply is an
+// error, never silently dropped (ADR-0007, ADR-0018). An empty Target means
+// no view was named (the caller falls back to the workspace default).
+func resolveLaunch(view, arg string, ws *workspace.Workspace, f launchFlags) (tui.NavigateMsg, error) {
+	msg := tui.NavigateMsg{Target: view}
+	var facets []catalog.Facet
 
-func resolveLaunchNarrowing(cliView string, ws *workspace.Workspace, f launchFlags) (launchNarrowing, error) {
-	var n launchNarrowing
-	n.view = cliView
-	presetName := f.preset
-
-	if presetName != "" {
-		if ws == nil || len(ws.Presets) == 0 {
-			return n, fmt.Errorf("preset %q: no presets in .dtui.yaml or this context's personal presets", presetName)
-		}
-		p, ok := ws.LookupPreset(presetName)
-		if !ok {
-			avail := ws.PresetNames()
-			if len(avail) == 0 {
-				return n, fmt.Errorf("unknown preset %q (workspace has none)", presetName)
-			}
-			return n, fmt.Errorf("unknown preset %q (available: %s)", presetName, strings.Join(avail, ", "))
+	if f.preset != "" {
+		p, err := lookupLaunchPreset(ws, f.preset)
+		if err != nil {
+			return msg, err
 		}
 		presetView := canonicalViewName(p.View)
-		if catalog.Lookup(presetView) == nil && !isBespokeView(presetView) {
-			return n, fmt.Errorf("preset %q: unknown view %q", presetName, p.View)
-		}
 		if err := requireFacetTable(presetView); err != nil {
-			return n, fmt.Errorf("preset %q: %w", presetName, err)
+			return msg, fmt.Errorf("preset %q: %w", f.preset, err)
 		}
-		if n.view != "" {
-			if canonicalViewName(n.view) != presetView {
-				return n, fmt.Errorf("preset %q is for view %s, not %s", presetName, p.View, n.view)
-			}
-		} else {
-			n.view = presetView
+		if msg.Target != "" && canonicalViewName(msg.Target) != presetView {
+			return msg, fmt.Errorf("preset %q is for view %s, not %s", f.preset, p.View, msg.Target)
 		}
-		n.tf = p.Timeframe
-		n.facets = catalogFacets(p.Facets)
-		n.searches = append([]string{}, p.Searches...)
+		msg.Target = presetView
+		msg.Timeframe = p.Timeframe
+		facets = catalogFacets(p.Facets)
+		msg.Searches = append([]string{}, p.Searches...)
 	}
 
 	extra, err := parseFacetFlags(f.facets)
 	if err != nil {
-		return n, err
+		return msg, err
 	}
-	n.facets = mergeFacets(n.facets, extra)
+	facets = mergeFacets(facets, extra)
 	searches, err := parseSearchFlags(f.searches)
 	if err != nil {
-		return n, err
+		return msg, err
 	}
-	n.searches = append(n.searches, searches...)
-	if presetName == "" && len(extra) > 0 && n.view == "" {
-		return n, fmt.Errorf("--facet requires a view argument (e.g. dtui logs --facet loglevel=ERROR)")
+	msg.Searches = append(msg.Searches, searches...)
+
+	if err := resolveLaunchDQL(&msg, arg, f); err != nil {
+		return msg, err
 	}
-	if presetName == "" && len(searches) > 0 && n.view == "" {
-		return n, fmt.Errorf("--search requires a view argument (e.g. dtui logs --search timeout)")
+	if msg.Target == "" && (len(extra) > 0 || len(searches) > 0 || f.lens != "") {
+		return msg, fmt.Errorf("--facet, --search and --lens need a view (e.g. dtui logs --facet loglevel=ERROR)")
 	}
-	if n.view != "" && (presetName != "" || len(n.facets) > 0 || len(n.searches) > 0) {
-		if err := requireFacetTable(n.view); err != nil {
-			return n, err
+	if err := resolveLaunchArg(&msg, arg); err != nil {
+		return msg, err
+	}
+	if len(facets) > 0 || len(msg.Searches) > 0 {
+		if msg.Target == "trace" {
+			return msg, fmt.Errorf("dtui trace <id> opens the trace waterfall; --facet/--search/--preset do not apply")
+		}
+		if err := requireFacetTable(msg.Target); err != nil {
+			return msg, err
 		}
 	}
+	if f.lens != "" {
+		if err := checkLens(msg.Target, f.lens); err != nil {
+			return msg, err
+		}
+		msg.Lens = f.lens
+	}
+	if err := resolveLaunchWindow(&msg, f); err != nil {
+		return msg, err
+	}
+	msg.Facets = navFacets(facets)
+	return msg, nil
+}
 
-	if err := resolveLaunchWindow(&n, f); err != nil {
-		return n, err
+func lookupLaunchPreset(ws *workspace.Workspace, name string) (workspace.Preset, error) {
+	if ws == nil || len(ws.Presets) == 0 {
+		return workspace.Preset{}, fmt.Errorf("preset %q: no presets in .dtui.yaml or this context's personal presets", name)
 	}
-	if err := resolveLaunchDQL(&n, f); err != nil {
-		return n, err
+	p, ok := ws.LookupPreset(name)
+	if !ok {
+		return p, fmt.Errorf("unknown preset %q (available: %s)", name, strings.Join(ws.PresetNames(), ", "))
 	}
+	if catalog.Lookup(canonicalViewName(p.View)) == nil && !isBespokeView(canonicalViewName(p.View)) {
+		return p, fmt.Errorf("preset %q: unknown view %q", name, p.View)
+	}
+	return p, nil
+}
 
-	if n.view != "" && catalog.Lookup(n.view) == nil && !isBespokeView(n.view) && !isNavView(n.view) {
-		return n, fmt.Errorf("unknown view %q", n.view)
+// resolveLaunchArg gives the positional argument its command-bar meaning:
+// nav routes it, trace opens the waterfall, a catalog table pre-fills its
+// filter. Home takes none; the query view's was consumed as DQL.
+func resolveLaunchArg(msg *tui.NavigateMsg, arg string) error {
+	switch {
+	case msg.Target == "", msg.Target == "home":
+		if arg != "" {
+			return fmt.Errorf("home takes no argument")
+		}
+	case canonicalViewName(msg.Target) == "query":
+	case isNavView(msg.Target):
+		msg.Target, msg.ID = "nav", arg
+	case msg.Target == "trace" && arg != "":
+		msg.ID = arg
+	default:
+		spec := catalog.Lookup(msg.Target)
+		if spec == nil {
+			return fmt.Errorf("unknown view %q (available: home, query, nav, %s)", msg.Target, strings.Join(catalog.Names(), ", "))
+		}
+		// The record sampler without a table would just re-browse the table
+		// catalog — that browser already exists as tables (as in viewFor).
+		if spec.Name == "records" {
+			spec = catalog.Lookup("tables")
+		}
+		msg.Target, msg.Filter = spec.Name, arg
 	}
-	return n, nil
+	return nil
+}
+
+// checkLens rejects a lens the view does not have, naming the ones it does.
+func checkLens(view, lens string) error {
+	spec := catalog.Lookup(view)
+	if spec == nil || isBespokeView(view) {
+		return fmt.Errorf("--lens: %s is not a catalog table", view)
+	}
+	names := make([]string, 0, len(spec.Lenses))
+	for _, l := range spec.Lenses {
+		if l.Name == lens {
+			return nil
+		}
+		names = append(names, l.Name)
+	}
+	if len(names) == 0 {
+		return fmt.Errorf("--lens: %s has no lenses", spec.Name)
+	}
+	return fmt.Errorf("--lens %q: %s has %s", lens, spec.Name, strings.Join(names, ", "))
 }
 
 // resolveLaunchWindow applies --timeframe or --from/--to; either wins over a
-// preset's timeframe.
-func resolveLaunchWindow(n *launchNarrowing, f launchFlags) error {
+// preset's timeframe. The query view's window belongs in its DQL.
+func resolveLaunchWindow(msg *tui.NavigateMsg, f launchFlags) error {
+	if f.timeframe == "" && f.from == "" && f.to == "" {
+		return nil
+	}
+	if canonicalViewName(msg.Target) == "query" {
+		return fmt.Errorf("the query view ignores --timeframe/--from/--to; put from:/to: in the query instead")
+	}
 	if f.timeframe != "" && (f.from != "" || f.to != "") {
 		return fmt.Errorf("--timeframe and --from/--to are mutually exclusive")
 	}
@@ -208,14 +263,11 @@ func resolveLaunchWindow(n *launchNarrowing, f launchFlags) error {
 		if _, ok := catalog.ParseTimeframe(f.timeframe); !ok {
 			return fmt.Errorf("--timeframe %q: expected a relative window like 45m, 2h, 7d", f.timeframe)
 		}
-		n.tf = f.timeframe
+		msg.Timeframe = f.timeframe
 		return nil
-	}
-	if f.to != "" && f.from == "" {
-		return fmt.Errorf("--to requires --from")
 	}
 	if f.from == "" {
-		return nil
+		return fmt.Errorf("--to requires --from")
 	}
 	from, err := parseLaunchTime("--from", f.from)
 	if err != nil {
@@ -230,7 +282,7 @@ func resolveLaunchWindow(n *launchNarrowing, f launchFlags) error {
 			return fmt.Errorf("--to %s must be after --from %s", f.to, f.from)
 		}
 	}
-	n.tf, n.from, n.to = "", from, to
+	msg.Timeframe, msg.From, msg.To = "", from, to
 	return nil
 }
 
@@ -247,37 +299,62 @@ func parseLaunchTime(flag, s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("%s %q: expected RFC 3339 with a zone (2026-01-02T15:04Z or 2026-01-02T15:04:05+01:00)", flag, s)
 }
 
-// resolveLaunchDQL applies --dql / --dql-file: they open the query editor
-// with the query already running.
-func resolveLaunchDQL(n *launchNarrowing, f launchFlags) error {
-	if f.dql == "" && f.dqlFile == "" {
+// resolveLaunchDQL takes the query the way `dtctl query` does — positional,
+// --dql, or -f/--file — and opens the query view with it already running.
+func resolveLaunchDQL(msg *tui.NavigateMsg, arg string, f launchFlags) error {
+	isQuery := msg.Target != "" && canonicalViewName(msg.Target) == "query"
+	given := 0
+	for _, s := range []string{f.dql, f.file} {
+		if s != "" {
+			given++
+		}
+	}
+	if isQuery && arg != "" {
+		given++
+	}
+	if given == 0 {
 		return nil
 	}
-	if f.dql != "" && f.dqlFile != "" {
-		return fmt.Errorf("--dql and --dql-file are mutually exclusive")
+	if given > 1 {
+		return fmt.Errorf("give the query once: as an argument, --dql, or -f/--file")
+	}
+	if msg.Target != "" && !isQuery {
+		return fmt.Errorf("--dql and -f/--file open the query view, not %s", msg.Target)
 	}
 	if f.preset != "" {
-		return fmt.Errorf("--dql cannot be combined with --preset")
-	}
-	if n.view != "" && canonicalViewName(n.view) != "query" {
-		return fmt.Errorf("--dql opens the query view, not %s", n.view)
-	}
-	if n.tf != "" || !n.from.IsZero() {
-		return fmt.Errorf("--dql ignores --timeframe/--from/--to; put from:/to: in the query instead")
+		return fmt.Errorf("a query cannot be combined with --preset")
 	}
 	dql := f.dql
-	if f.dqlFile != "" {
-		data, err := os.ReadFile(f.dqlFile)
+	if isQuery && arg != "" {
+		dql = arg
+	}
+	if f.file != "" {
+		if f.file == "-" {
+			return fmt.Errorf("-f -: dtui needs the terminal for keyboard input; pass a file path or --dql")
+		}
+		data, err := os.ReadFile(f.file)
 		if err != nil {
-			return fmt.Errorf("--dql-file: %w", err)
+			return fmt.Errorf("--file: %w", err)
 		}
 		dql = string(data)
 	}
 	if strings.TrimSpace(dql) == "" {
-		return fmt.Errorf("--dql: query is empty")
+		return fmt.Errorf("the query is empty")
 	}
-	n.view, n.dql = "query", strings.TrimSpace(dql)
+	msg.Target, msg.DQL = "query", strings.TrimSpace(dql)
 	return nil
+}
+
+func navFacets(in []catalog.Facet) []tui.NavFacet {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]tui.NavFacet, 0, len(in))
+	for _, f := range in {
+		out = append(out, tui.NavFacet{Field: f.Field, Value: f.Value, Tokens: f.Tokens,
+			MapField: f.MapField, MapKey: f.MapKey})
+	}
+	return out
 }
 
 func parseSearchFlags(flags []string) ([]string, error) {
