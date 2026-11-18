@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dynatrace-oss/dtctl/sdk/session"
+	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/workspace"
 )
 
@@ -80,6 +81,29 @@ segments:
 	}
 	if got := workspaceNotice(empty); got != "" {
 		t.Errorf("empty workspace notice = %q, want none", got)
+	}
+}
+
+func TestWritePresetListSanitizesValues(t *testing.T) {
+	raw := "ERR\x1b[31mOR"
+	ws := &workspace.Workspace{Presets: map[string]workspace.Preset{
+		"payments-errors": {
+			View:     "logs",
+			Facets:   []workspace.PresetFacet{{Field: "loglevel", Value: raw}},
+			Searches: []string{"a\x07b"},
+		},
+	}}
+	var buf strings.Builder
+	writePresetList(&buf, ws, nil)
+	out := buf.String()
+	if strings.Contains(out, "\x1b") || strings.Contains(out, "\x07") {
+		t.Fatalf("raw control characters leaked:\n%q", out)
+	}
+	if !strings.Contains(out, catalog.SafeText(raw)) {
+		t.Errorf("sanitized facet value missing:\n%s", out)
+	}
+	if !strings.Contains(out, catalog.SafeText("a\x07b")) {
+		t.Errorf("sanitized search missing:\n%s", out)
 	}
 }
 

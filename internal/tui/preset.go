@@ -244,10 +244,11 @@ func (a *app) deleteNamedPreset(name string, picker *presetPicker) tea.Cmd {
 		return statusErr(err.Error())
 	}
 	delete(a.presets, name)
-	msg := fmt.Sprintf("deleted preset %s", name)
+	detail := strings.TrimSpace(p.View + " " + p.narrowing())
+	msg := fmt.Sprintf("deleted preset %s (%s)", name, detail)
 	if wp, ok := a.workspacePresets[name]; ok {
 		a.presets[name] = wp
-		msg = fmt.Sprintf("deleted personal overlay — workspace %s remains", name)
+		msg = fmt.Sprintf("deleted personal overlay %s (%s) — workspace remains", name, detail)
 	}
 	names := a.presetNames()
 	if len(names) == 0 {

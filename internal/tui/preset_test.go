@@ -207,9 +207,15 @@ func TestPresetPickerDeletesPersonal(t *testing.T) {
 	if _, ok := a.presets["checkout-pods"]; ok {
 		t.Fatal("checkout-pods still in memory")
 	}
+	if !strings.Contains(a.status, "checkout-pods") || !strings.Contains(a.status, "pods") || !strings.Contains(a.status, "k8s.namespace.name=checkout") {
+		t.Errorf("delete status missing narrowing: %q", a.status)
+	}
 	press(a, key("d")) // remaining personal overlay
 	if got := a.presets["payments-errors"]; got.Personal || got.Facets[0].Value != "ERROR" {
 		t.Errorf("expected workspace restore, got %+v", got)
+	}
+	if !strings.Contains(a.status, "payments-errors") || !strings.Contains(a.status, "loglevel=WARN") || !strings.Contains(a.status, "workspace remains") {
+		t.Errorf("overlay delete status missing detail: %q", a.status)
 	}
 }
 

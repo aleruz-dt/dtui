@@ -237,10 +237,10 @@ func writePresetList(w io.Writer, merged, personal *workspace.Workspace) {
 		}
 		var parts []string
 		for _, f := range p.Facets {
-			parts = append(parts, f.Field+"="+f.Value)
+			parts = append(parts, catalog.SafeText(f.Field)+"="+catalog.SafeText(f.Value))
 		}
 		for _, s := range p.Searches {
-			parts = append(parts, "/"+s)
+			parts = append(parts, "/"+catalog.SafeText(s))
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, p.View, src, strings.Join(parts, ", "))
 	}
