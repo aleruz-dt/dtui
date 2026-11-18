@@ -103,6 +103,20 @@ func TestCommandBarArgsPrefillFilter(t *testing.T) {
 	}
 }
 
+// `:query <dql>` runs the query, keeping whitespace inside string literals.
+func TestCommandBarQueryRunsDQL(t *testing.T) {
+	a := testApp(t, "problems")
+	press(a, key(":"))
+	for _, r := range `query fetch logs | filter content == "a  b"` {
+		press(a, key(string(r)))
+	}
+	press(a, key("enter"))
+	qv, ok := a.top().(*queryView)
+	if !ok || qv.editing || qv.DQL() != `fetch logs | filter content == "a  b"` {
+		t.Fatalf("':query <dql>' → %T %q", a.top(), a.top().(dqlProvider).DQL())
+	}
+}
+
 // Finding #6: with empty command-bar input, enter opens the highlighted
 // suggestion rather than silently closing.
 func TestCommandBarEmptyEnterOpensHighlighted(t *testing.T) {

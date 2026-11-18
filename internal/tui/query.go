@@ -66,7 +66,7 @@ func newQueryView(ds *dataSource, dql string, tf catalog.Timeframe, hist *queryH
 }
 
 // submitted lands the view on results for dql, as if the user had pressed
-// enter on it: Init then runs it (history restore, `dtui query --dql`).
+// enter on it: Init then runs it (history restore, `dtui query <dql>`).
 func (v *queryView) submitted(dql string) {
 	v.editor.SetValue(dql)
 	v.current = dql

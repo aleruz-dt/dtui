@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dynatrace-oss/dtctl/sdk/session"
+	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/workspace"
 )
@@ -122,7 +123,7 @@ func TestListPresetsIsACommand(t *testing.T) {
 	}
 }
 
-func TestResolveLaunchNarrowing(t *testing.T) {
+func TestResolveLaunchPreset(t *testing.T) {
 	ws, err := workspace.Load(writeWorkspaceFile(t, `
 presets:
   payments-errors:
@@ -134,39 +135,68 @@ presets:
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := resolveLaunchNarrowing("", ws, launchFlags{preset: "payments-errors"})
+	p, err := resolveLaunch("", "", ws, launchFlags{preset: "payments-errors"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n.view != "logs" || len(n.facets) != 1 || n.facets[0].Value != "ERROR" {
-		t.Errorf("preset launch = %+v", n)
+	if p.Target != "logs" || len(p.Facets) != 1 || p.Facets[0].Value != "ERROR" {
+		t.Errorf("preset launch = %+v", p)
 	}
-	n, err = resolveLaunchNarrowing("logs", ws, launchFlags{preset: "payments-errors", facets: []string{"loglevel=WARN", "k8s.namespace.name=payments"}})
+	p, err = resolveLaunch("logs", "", ws, launchFlags{preset: "payments-errors", facets: []string{"loglevel=WARN", "k8s.namespace.name=payments"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(n.facets) != 2 || n.facets[0].Value != "WARN" || n.facets[1].Field != "k8s.namespace.name" {
-		t.Errorf("cli facet merge = %+v", n.facets)
+	if len(p.Facets) != 2 || p.Facets[0].Value != "WARN" || p.Facets[1].Field != "k8s.namespace.name" {
+		t.Errorf("cli facet merge = %+v", p.Facets)
 	}
-	if _, err := resolveLaunchNarrowing("pods", ws, launchFlags{preset: "payments-errors"}); err == nil {
+	if _, err := resolveLaunch("pods", "", ws, launchFlags{preset: "payments-errors"}); err == nil {
 		t.Fatal("view mismatch should error")
 	}
-	if _, err := resolveLaunchNarrowing("", nil, launchFlags{preset: "payments-errors"}); err == nil {
+	if _, err := resolveLaunch("", "", nil, launchFlags{preset: "payments-errors"}); err == nil {
 		t.Fatal("missing catalog should error")
 	}
-	if _, err := resolveLaunchNarrowing("query", nil, launchFlags{facets: []string{"loglevel=ERROR"}}); err == nil {
+	if _, err := resolveLaunch("query", "", nil, launchFlags{facets: []string{"loglevel=ERROR"}}); err == nil {
 		t.Fatal("query --facet should error")
 	}
-	if _, err := resolveLaunchNarrowing("slos", nil, launchFlags{facets: []string{"id=x"}}); err == nil {
+	if _, err := resolveLaunch("slos", "", nil, launchFlags{facets: []string{"id=x"}}); err == nil {
 		t.Fatal("API-backed --facet should error")
 	}
-	if _, err := resolveLaunchNarrowing("nav", nil, launchFlags{facets: []string{"id=x"}}); err == nil {
+	if _, err := resolveLaunch("nav", "", nil, launchFlags{facets: []string{"id=x"}}); err == nil {
 		t.Fatal("nav --facet should error")
 	}
 }
 
+// The positional argument keeps its command-bar meaning.
+func TestResolveLaunchArgument(t *testing.T) {
+	cases := []struct {
+		view, arg string
+		want      tui.NavigateMsg
+	}{
+		{"", "", tui.NavigateMsg{}},
+		{"pods", "checkout", tui.NavigateMsg{Target: "pods", Filter: "checkout"}},
+		{"po", "", tui.NavigateMsg{Target: "pods"}},
+		{"trace", "4bf92f3577b34da6a3ce929d0e0e4736", tui.NavigateMsg{Target: "trace", ID: "4bf92f3577b34da6a3ce929d0e0e4736"}},
+		{"trace", "", tui.NavigateMsg{Target: "traces"}},
+		{"smartscape", "payments", tui.NavigateMsg{Target: "nav", ID: "payments"}},
+		{"query", "fetch logs | limit 5", tui.NavigateMsg{Target: "query", DQL: "fetch logs | limit 5"}},
+		{"dql", "", tui.NavigateMsg{Target: "dql"}},
+		{"records", "", tui.NavigateMsg{Target: "tables"}},
+	}
+	for _, c := range cases {
+		got, err := resolveLaunch(c.view, c.arg, nil, launchFlags{})
+		if err != nil || got.Target != c.want.Target || got.ID != c.want.ID || got.Filter != c.want.Filter || got.DQL != c.want.DQL {
+			t.Errorf("dtui %s %s = %+v, %v; want %+v", c.view, c.arg, got, err, c.want)
+		}
+	}
+	for _, c := range [][2]string{{"home", "x"}, {"bogus", ""}, {"bogus", "x"}} {
+		if _, err := resolveLaunch(c[0], c[1], nil, launchFlags{}); err == nil {
+			t.Errorf("dtui %s %s: want an error", c[0], c[1])
+		}
+	}
+}
+
 func TestResolveLaunchHandoffFlags(t *testing.T) {
-	n, err := resolveLaunchNarrowing("logs", nil, launchFlags{
+	p, err := resolveLaunch("logs", "", nil, launchFlags{
 		searches: []string{"timeout", " gateway "},
 		from:     "2026-01-02T14:00Z",
 		to:       "2026-01-02T15:30:00+01:00",
@@ -174,69 +204,71 @@ func TestResolveLaunchHandoffFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(n.searches) != 2 || n.searches[1] != "gateway" {
-		t.Errorf("searches = %q", n.searches)
+	if len(p.Searches) != 2 || p.Searches[1] != "gateway" {
+		t.Errorf("searches = %q", p.Searches)
 	}
 	wantFrom := time.Date(2026, 1, 2, 14, 0, 0, 0, time.UTC)
 	wantTo := time.Date(2026, 1, 2, 14, 30, 0, 0, time.UTC)
-	if !n.from.Equal(wantFrom) || !n.to.Equal(wantTo) || n.tf != "" {
-		t.Errorf("window = %v → %v (tf %q)", n.from, n.to, n.tf)
+	if !p.From.Equal(wantFrom) || !p.To.Equal(wantTo) || p.Timeframe != "" {
+		t.Errorf("window = %v → %v (tf %q)", p.From, p.To, p.Timeframe)
 	}
 
-	n, err = resolveLaunchNarrowing("problems", nil, launchFlags{timeframe: "24h"})
-	if err != nil || n.tf != "24h" {
-		t.Errorf("--timeframe = %+v, %v", n, err)
+	p, err = resolveLaunch("problems", "", nil, launchFlags{timeframe: "24h"})
+	if err != nil || p.Timeframe != "24h" {
+		t.Errorf("--timeframe = %+v, %v", p, err)
 	}
 
-	n, err = resolveLaunchNarrowing("", nil, launchFlags{dql: "  fetch logs | limit 5\n"})
-	if err != nil || n.view != "query" || n.dql != "fetch logs | limit 5" {
-		t.Errorf("--dql without a view = %+v, %v", n, err)
+	p, err = resolveLaunch("tr", "", nil, launchFlags{lens: "genai"})
+	if err != nil || p.Target != "traces" || p.Lens != "genai" {
+		t.Errorf("--lens = %+v, %v", p, err)
+	}
+
+	p, err = resolveLaunch("", "", nil, launchFlags{dql: "  fetch logs | limit 5\n"})
+	if err != nil || p.Target != "query" || p.DQL != "fetch logs | limit 5" {
+		t.Errorf("--dql without a view = %+v, %v", p, err)
 	}
 
 	file := filepath.Join(t.TempDir(), "q.dql")
 	if err := os.WriteFile(file, []byte("fetch spans\n| limit 3\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	n, err = resolveLaunchNarrowing("dql", nil, launchFlags{dqlFile: file})
-	if err != nil || n.dql != "fetch spans\n| limit 3" {
-		t.Errorf("--dql-file = %+v, %v", n, err)
+	p, err = resolveLaunch("dql", "", nil, launchFlags{file: file})
+	if err != nil || p.DQL != "fetch spans\n| limit 3" {
+		t.Errorf("--file = %+v, %v", p, err)
 	}
 
 	for name, tc := range map[string]struct {
-		view string
-		f    launchFlags
+		view, arg string
+		f         launchFlags
 	}{
-		"search without a view":   {"", launchFlags{searches: []string{"x"}}},
-		"empty search":            {"logs", launchFlags{searches: []string{" "}}},
-		"search on API view":      {"slos", launchFlags{searches: []string{"x"}}},
-		"bad timeframe":           {"logs", launchFlags{timeframe: "yesterday"}},
-		"timeframe with from":     {"logs", launchFlags{timeframe: "2h", from: "2026-01-02T14:00Z"}},
-		"to without from":         {"logs", launchFlags{to: "2026-01-02T14:00Z"}},
-		"from without zone":       {"logs", launchFlags{from: "2026-01-02T14:00"}},
-		"to before from":          {"logs", launchFlags{from: "2026-01-02T14:00Z", to: "2026-01-02T13:00Z"}},
-		"dql on a table":          {"logs", launchFlags{dql: "fetch logs"}},
-		"dql and dql-file":        {"", launchFlags{dql: "fetch logs", dqlFile: file}},
-		"dql with a window":       {"", launchFlags{dql: "fetch logs", timeframe: "2h"}},
-		"empty dql":               {"query", launchFlags{dql: "   "}},
-		"missing dql-file":        {"query", launchFlags{dqlFile: filepath.Join(t.TempDir(), "nope.dql")}},
-		"dql with preset":         {"", launchFlags{dql: "fetch logs", preset: "x"}},
-		"facet on the query view": {"query", launchFlags{facets: []string{"a=b"}, dql: "fetch logs"}},
+		"search without a view":     {"", "", launchFlags{searches: []string{"x"}}},
+		"empty search":              {"logs", "", launchFlags{searches: []string{" "}}},
+		"search on API view":        {"slos", "", launchFlags{searches: []string{"x"}}},
+		"search on a trace id":      {"trace", "4bf92f3577b34da6a3ce929d0e0e4736", launchFlags{searches: []string{"x"}}},
+		"unknown lens":              {"traces", "", launchFlags{lens: "nope"}},
+		"lens on a bespoke view":    {"home", "", launchFlags{lens: "genai"}},
+		"lens without a view":       {"", "", launchFlags{lens: "genai"}},
+		"bad timeframe":             {"logs", "", launchFlags{timeframe: "yesterday"}},
+		"timeframe with from":       {"logs", "", launchFlags{timeframe: "2h", from: "2026-01-02T14:00Z"}},
+		"to without from":           {"logs", "", launchFlags{to: "2026-01-02T14:00Z"}},
+		"from without zone":         {"logs", "", launchFlags{from: "2026-01-02T14:00"}},
+		"to before from":            {"logs", "", launchFlags{from: "2026-01-02T14:00Z", to: "2026-01-02T13:00Z"}},
+		"dql on a table":            {"logs", "", launchFlags{dql: "fetch logs"}},
+		"dql and file":              {"", "", launchFlags{dql: "fetch logs", file: file}},
+		"positional and dql":        {"query", "fetch logs", launchFlags{dql: "fetch spans"}},
+		"query with a window":       {"query", "fetch logs", launchFlags{timeframe: "2h"}},
+		"dql with a window":         {"", "", launchFlags{dql: "fetch logs", timeframe: "2h"}},
+		"empty dql":                 {"query", "", launchFlags{dql: "   "}},
+		"file from stdin":           {"query", "", launchFlags{file: "-"}},
+		"missing file":              {"query", "", launchFlags{file: filepath.Join(t.TempDir(), "nope.dql")}},
+		"dql with preset":           {"", "", launchFlags{dql: "fetch logs", preset: "x"}},
+		"facet on the query view":   {"query", "", launchFlags{facets: []string{"a=b"}, dql: "fetch logs"}},
+		"window on the query view":  {"query", "", launchFlags{from: "2026-01-02T14:00Z"}},
+		"search on the query view":  {"dql", "fetch logs", launchFlags{searches: []string{"x"}}},
+		"argument on home with dql": {"home", "x", launchFlags{dql: "fetch logs"}},
 	} {
-		if _, err := resolveLaunchNarrowing(tc.view, nil, tc.f); err == nil {
+		if _, err := resolveLaunch(tc.view, tc.arg, nil, tc.f); err == nil {
 			t.Errorf("%s: want an error", name)
-		}
-	}
-}
-
-func TestCheckViewArg(t *testing.T) {
-	for _, view := range []string{"nav", "trace", "pods", "logs"} {
-		if err := checkViewArg(view); err != nil {
-			t.Errorf("%s should take an argument: %v", view, err)
-		}
-	}
-	for _, view := range []string{"home", "query", "dql", "bogus"} {
-		if err := checkViewArg(view); err == nil {
-			t.Errorf("%s should reject an argument", view)
 		}
 	}
 }

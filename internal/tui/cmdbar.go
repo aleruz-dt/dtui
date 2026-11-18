@@ -99,8 +99,13 @@ func (p *cmdPalette) HandleKey(msg tea.KeyMsg) tea.Cmd {
 			return a.openHelp()
 		case "history", "hist":
 			return a.openHistory()
-		case "home", "query", "dql":
+		case "home":
 			return a.jumpTo(input[0], "")
+		case "query", "dql":
+			// The raw remainder, not the re-joined fields: whitespace inside
+			// a DQL string literal is significant.
+			raw := strings.TrimSpace(p.input.Value())
+			return a.openQuery(strings.TrimSpace(strings.TrimPrefix(raw, input[0])))
 		case "nav", "smartscape", "navigator":
 			return a.openNav(arg)
 		case "trace":
@@ -147,8 +152,10 @@ func (p *cmdPalette) HandleKey(msg tea.KeyMsg) tea.Cmd {
 // argument narrowing the jump (":pods checkout" pre-fills the filter).
 func (a *app) openSpec(spec *catalog.Spec, arg string) tea.Cmd {
 	switch spec.Name {
-	case "home", "query":
+	case "home":
 		return a.jumpTo(spec.Name, "")
+	case "query":
+		return a.openQuery(arg)
 	case "nav":
 		return a.openNav(arg)
 	case "segments":
@@ -159,6 +166,19 @@ func (a *app) openSpec(spec *catalog.Spec, arg string) tea.Cmd {
 		return a.applyNamedPreset(arg)
 	}
 	return a.jumpTo(spec.Name, arg)
+}
+
+// openQuery opens the query editor — running dql when given (`:query <dql>`,
+// the command-bar form of `dtui query '<dql>'`).
+func (a *app) openQuery(dql string) tea.Cmd {
+	if dql == "" {
+		return a.jumpTo("query", "")
+	}
+	view, _, err := a.launchView(NavigateMsg{Target: "query", DQL: dql})
+	if err != nil {
+		return statusErr(err.Error())
+	}
+	return a.navigate(view, true)
 }
 
 func (p *cmdPalette) updateMatches() {
@@ -195,7 +215,7 @@ func (p *cmdPalette) View(width, height int) string {
 			theme.Dim.Render(pad(strings.Join(s.Aliases, " "), aliasW)) + " " +
 			theme.CrumbDim.Render(pad(s.Desc, descW))
 	})
-	b.WriteString("\n" + theme.Dim.Render("tab next · enter open · also :history :trace <id> :preset"))
+	b.WriteString("\n" + theme.Dim.Render("tab next · enter open · also :history :trace <id> :query <dql> :preset"))
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Position(0.2),
 		theme.OverlayBox.Render(b.String()))
 }

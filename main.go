@@ -88,8 +88,11 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
   # Hand over an investigation: window, server-side narrowing, or DQL
   dtui logs --from 2026-01-02T14:00Z --to 2026-01-02T15:00Z --facet loglevel=ERROR --search timeout
   dtui problems --timeframe 24h
-  dtui query --dql 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'
-  dtui query --dql-file investigation.dql
+  dtui traces --lens genai --timeframe 7d
+
+  # Open the query view running a DQL query — the same forms as dtctl query
+  dtui query 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'
+  dtui query -f investigation.dql
 
   # Launch against a specific context (session-local, never persisted)
   dtui --context prod
@@ -118,27 +121,11 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			return fmt.Errorf("dtui requires a terminal (stdout is not a TTY)")
 		}
 
-		view := "home"
-		if ws != nil && ws.View != "" {
-			if isBespokeView(ws.View) || catalog.Lookup(ws.View) != nil {
-				view = ws.View
-			} else {
-				wsWarnings = append(wsWarnings, fmt.Sprintf("unknown workspace view %q — starting on home", ws.View))
-			}
-		}
-		cliView := ""
-		viewArg := ""
+		var cliView, viewArg string
 		if len(args) >= 1 {
 			cliView = args[0]
-			view = args[0]
 		}
 		if len(args) == 2 {
-			// The second word means what it means after the view in the
-			// command bar: nav routes it, :trace opens a waterfall, a table
-			// pre-fills its filter. Home and the query editor take none.
-			if err := checkViewArg(view); err != nil {
-				return err
-			}
 			viewArg = args[1]
 		}
 
@@ -160,21 +147,18 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			wsWarnings = append(wsWarnings, personalWarn)
 		}
 		presetCatalog := workspace.MergePresetCatalog(ws, personal)
-		narrow, err := resolveLaunchNarrowing(cliView, presetCatalog, launch)
+		page, err := resolveLaunch(cliView, viewArg, presetCatalog, launch)
 		if err != nil {
 			return err
 		}
-		if narrow.view != "" {
-			view = narrow.view
-		}
-		if view == "trace" && viewArg != "" && (len(narrow.facets) > 0 || len(narrow.searches) > 0) {
-			return fmt.Errorf("dtui trace <id> opens the trace waterfall; --facet/--search/--preset do not apply")
-		}
-
-		// Only an explicit CLI argument can still be unknown here (the
-		// workspace view fell back above) — that stays a hard error.
-		if !isBespokeView(view) && catalog.Lookup(view) == nil {
-			return fmt.Errorf("unknown view %q (available: home, query, nav, %s)", view, strings.Join(catalog.Names(), ", "))
+		// No view named: the workspace default, which falls back to home
+		// rather than failing (a committed file must never brick dtui).
+		if page.Target == "" && ws != nil && ws.View != "" {
+			if isBespokeView(ws.View) || catalog.Lookup(ws.View) != nil {
+				page.Target = ws.View
+			} else {
+				wsWarnings = append(wsWarnings, fmt.Sprintf("unknown workspace view %q — starting on home", ws.View))
+			}
 		}
 		// dtui ships its own client identity:
 		// tenant-side request logs must distinguish dtui from dtctl.
@@ -192,13 +176,7 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			SegmentSource:    segmentSource(segment.NewHandler(c)),
 			SwitchContext:    switchContext,
 			Contexts:         contextNames(cfg),
-			InitialView:      view,
-			InitialArg:       viewArg,
-			InitialDQL:       narrow.dql,
-			InitialFrom:      narrow.from,
-			InitialTo:        narrow.to,
-			InitialFacets:    narrow.facets,
-			InitialSearches:  narrow.searches,
+			Launch:           page,
 			HistoryPath:      historyPath(),
 			QueryHistoryPath: queryHistoryPath(),
 			Presets:          mergedNamedPresets(ws, personal),
@@ -210,9 +188,6 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			opts.WorkspaceSegments = workspaceSegments(ws)
 			opts.WorkspacePrimaryTags = ws.PrimaryTags
 			opts.InitialTimeframe = ws.Timeframe
-		}
-		if narrow.tf != "" {
-			opts.InitialTimeframe = narrow.tf
 		}
 		switch {
 		case len(wsWarnings) > 0:
@@ -457,27 +432,13 @@ func isBespokeView(name string) bool {
 	return isNavView(name)
 }
 
-// isNavView reports whether the name opens the smartscape navigator — the
-// one view whose CLI form takes an argument.
+// isNavView reports whether the name opens the smartscape navigator.
 func isNavView(name string) bool {
 	switch name {
 	case "nav", "smartscape", "navigator":
 		return true
 	}
 	return false
-}
-
-// checkViewArg rejects a positional argument on views whose command-bar
-// form takes none.
-func checkViewArg(view string) error {
-	switch view {
-	case "home", "query", "dql":
-		return fmt.Errorf("%s takes no argument (use dtui query --dql '…' for a query)", view)
-	}
-	if isNavView(view) || catalog.Lookup(view) != nil {
-		return nil
-	}
-	return fmt.Errorf("unknown view %q", view)
 }
 
 func viewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -521,8 +482,9 @@ func main() {
 	rootCmd.Flags().StringVar(&launch.timeframe, "timeframe", "", "relative starting window: 45m, 2h, 7d")
 	rootCmd.Flags().StringVar(&launch.from, "from", "", "absolute window start, RFC 3339 with a zone (2026-01-02T15:04Z)")
 	rootCmd.Flags().StringVar(&launch.to, "to", "", "absolute window end (default: now); requires --from")
-	rootCmd.Flags().StringVar(&launch.dql, "dql", "", "open the query view running this DQL")
-	rootCmd.Flags().StringVar(&launch.dqlFile, "dql-file", "", "open the query view running the DQL in this file")
+	rootCmd.Flags().StringVar(&launch.lens, "lens", "", "lens to open the starting view on (e.g. traces --lens genai)")
+	rootCmd.Flags().StringVar(&launch.dql, "dql", "", "open the query view running this DQL (alias for dtui query '<dql>')")
+	rootCmd.Flags().StringVarP(&launch.file, "file", "f", "", "open the query view running the DQL in this file")
 	_ = rootCmd.RegisterFlagCompletionFunc("preset", presetCompletion)
 
 	// dtctl reserves -v for --verbose; keep the long form only.

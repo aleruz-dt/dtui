@@ -28,21 +28,11 @@ type Options struct {
 	// Sources backs the API views (catalog.Spec.API): "slos",
 	// "anomaly-detectors", "log-patterns". Constructed in the dtui main
 	// package so no HTTP lives in this package.
-	Sources     map[string]Source
-	InitialView string // catalog view name or alias; "" = problems
-	// InitialArg is the optional CLI argument for the initial view, with the
-	// command bar's meaning: nav routes it (`dtui nav <type|id|name>`),
-	// "trace" opens the waterfall for that trace id, a catalog table
-	// pre-fills its filter (`dtui pods checkout`).
-	InitialArg string
-	// InitialDQL opens the query view on this DQL, already submitted
-	// (`dtui query --dql`). Ignored when the initial view is not query.
-	InitialDQL string
-	// InitialFacets and InitialSearches are server-side narrowing applied to
-	// the first catalog table (CLI --preset / --facet). Ignored when the
-	// initial view is not a table.
-	InitialFacets    []catalog.Facet
-	InitialSearches  []string
+	Sources map[string]Source
+	// Launch is the first page (Target "" = home) and its narrowing — the CLI
+	// view, argument and launch flags, built like a deep link. Context is
+	// ignored here: the caller already chose the context.
+	Launch           NavigateMsg
 	HistoryPath      string // navigation-history file; "" = in-memory only
 	QueryHistoryPath string // submitted-DQL history file; "" = in-memory only
 	// Presets are named facet sets available to :preset this session
@@ -80,10 +70,8 @@ type Options struct {
 	// primary-tag columns are active from the workspace.
 	WorkspacePrimaryTags []string
 	// InitialTimeframe is the workspace default window ("" = built-in 2h).
+	// Launch.Timeframe / Launch.From override it.
 	InitialTimeframe string
-	// InitialFrom/InitialTo pin an absolute startup window (CLI --from/--to)
-	// and win over InitialTimeframe. A zero InitialTo is open-ended.
-	InitialFrom, InitialTo time.Time
 	// StartupNotice is a one-line message shown on launch — how a committed
 	// .dtui.yaml announces it is steering the session (or failed to).
 	StartupNotice    string
@@ -261,44 +249,20 @@ func newApp(opts Options) (*app, error) {
 	if tf, ok := catalog.ParseTimeframe(opts.InitialTimeframe); ok {
 		a.tf = tf
 	}
-	if !opts.InitialFrom.IsZero() {
-		a.tf = catalog.AbsoluteTimeframe(opts.InitialFrom, opts.InitialTo, time.Now())
-	}
 	// Seed ds.primaryTags from the global workspace keys so tables opened
 	// before workspace segments resolve still project the columns.
 	a.updatePrimaryTags()
 
-	initial, err := a.viewFor(opts.InitialView)
+	initial, warns, err := a.launchView(opts.Launch)
 	if err != nil {
 		return nil, err
 	}
-	arg := strings.TrimSpace(opts.InitialArg)
-	switch v := initial.(type) {
-	case *navView:
-		// `dtui nav <arg>` — same routing as the :nav command-bar argument.
-		if arg != "" {
-			initial = a.navViewFor(arg)
+	if len(warns) > 0 {
+		if a.opts.StartupNotice != "" {
+			warns = append(warns, a.opts.StartupNotice)
 		}
-	case *queryView:
-		if dql := strings.TrimSpace(opts.InitialDQL); dql != "" {
-			v.submitted(dql)
-		}
-	case *tableView:
-		// `dtui trace <id>` — the :trace command-bar form; any other
-		// table argument pre-fills the filter, as `:pods checkout` does.
-		if arg != "" && opts.InitialView == "trace" {
-			initial = newWaterfallView(a.ds, arg, "", a.tf, time.Time{})
-		} else if arg != "" {
-			v.setFilter(arg)
-		}
-	}
-	if tv, ok := initial.(*tableView); ok {
-		if len(opts.InitialFacets) > 0 {
-			tv.facets = opts.InitialFacets
-		}
-		if len(opts.InitialSearches) > 0 {
-			tv.searches = opts.InitialSearches
-		}
+		a.opts.StartupNotice = strings.Join(warns, "; ")
+		a.opts.StartupNoticeErr = true
 	}
 	a.stack = []viewModel{initial}
 	return a, nil
@@ -769,67 +733,96 @@ func (a *app) navigateExternal(msg NavigateMsg) tea.Cmd {
 		return a.switchContext(c)
 	}
 
-	// Timeframe override (a deep link often wants a wider window than the live
-	// session): parse the label, falling back to the session tf on empty/bad.
-	tf := a.tf
-	if msg.Timeframe != "" {
+	view, warns, err := a.launchView(msg)
+	if err != nil {
+		return statusErr("navigate: " + err.Error())
+	}
+	if len(warns) > 0 {
+		warn = statusErr("navigate: " + strings.Join(warns, "; "))
+	}
+	return tea.Batch(warn, a.navigate(view, true))
+}
+
+// launchView builds the page a NavigateMsg names, with its narrowing in place
+// before Init composes the query. A requested window is adopted as the
+// session timeframe, so the header and later refreshes agree with it. warns
+// are non-fatal: the page still opens, minus what could not apply.
+func (a *app) launchView(msg NavigateMsg) (viewModel, []string, error) {
+	var warns []string
+	switch {
+	case !msg.From.IsZero():
+		a.tf = catalog.AbsoluteTimeframe(msg.From, msg.To, time.Now())
+	case msg.Timeframe != "":
 		if parsed, ok := catalog.ParseTimeframe(msg.Timeframe); ok {
-			tf = parsed
-			// Adopt it as the session timeframe so the header pill and any later
-			// refresh agree with the window the deep link opened (otherwise the
-			// query uses the wider window but the pill still shows the old one).
-			a.tf = tf
+			a.tf = parsed
 		} else {
-			warn = statusErr(fmt.Sprintf("navigate: bad timeframe %q — using %s", msg.Timeframe, tf.Label))
+			warns = append(warns, fmt.Sprintf("bad timeframe %q — using %s", msg.Timeframe, a.tf.Label))
 		}
 	}
+	tf := a.tf
+	id := strings.TrimSpace(msg.ID)
 
-	if msg.Target == "trace" {
-		id := strings.TrimSpace(msg.ID)
+	switch msg.Target {
+	case "", "home":
+		return newHomeView(a.ds, tf), warns, nil
+	case "query", "dql":
+		v := newQueryView(a.ds, "", tf, a.qhist)
+		if dql := strings.TrimSpace(msg.DQL); dql != "" {
+			v.submitted(dql)
+		}
+		return v, warns, nil
+	case "nav", "smartscape", "navigator":
+		if id != "" {
+			return a.navViewFor(id), warns, nil
+		}
+		return newNavView(a.ds, tf), warns, nil
+	case "trace":
 		if id == "" && len(msg.Facets) > 0 {
 			id = strings.TrimSpace(msg.Facets[0].Value)
 		}
 		if id == "" {
-			return statusErr("navigate: trace target needs a trace id")
+			return nil, nil, fmt.Errorf("trace target needs a trace id")
 		}
-		return tea.Batch(warn, a.navigate(newWaterfallView(a.ds, id, "", tf, time.Time{}), true))
+		return newWaterfallView(a.ds, id, "", tf, time.Time{}), warns, nil
 	}
 
 	spec := catalog.Lookup(msg.Target)
 	if spec == nil {
-		return statusErr(fmt.Sprintf("navigate: unknown view %q", msg.Target))
+		return nil, nil, fmt.Errorf("unknown view %q (available: home, query, nav, %s)", msg.Target, strings.Join(catalog.Names(), ", "))
 	}
 	facets := make([]catalog.Facet, 0, len(msg.Facets))
 	for _, f := range msg.Facets {
 		if f.Field == "" || f.Value == "" {
 			continue
 		}
-		// Facets arrive as external JSON (extension rule bundles). Field names are
-		// rendered as DQL identifiers via backtick-quoting, which has no escape for
-		// an embedded backtick — a field carrying '`', a newline, or '|' could
-		// break out of the identifier and inject pipeline stages. Values are always
-		// %q-quoted string literals, so only the field is a breakout vector; drop
-		// any field that carries one of those characters rather than emit unsafe DQL.
-		if !catalog.SafeFacetField(f.Field) {
-			warn = statusErr(fmt.Sprintf("navigate: dropping facet with unsafe field %q", f.Field))
+		// Facets can arrive as external JSON (extension rule bundles). Fields
+		// and map context/key are rendered as backtick-quoted DQL identifiers,
+		// which have no escape for an embedded backtick — one carrying '`', a
+		// newline, or '|' could break out and inject pipeline stages. Values are
+		// always %q-quoted literals, so drop the facet rather than emit unsafe DQL.
+		if !catalog.SafeFacetField(f.Field) ||
+			(f.MapField != "" && (!catalog.SafeFacetField(f.MapField) || !catalog.SafeFacetField(f.MapKey))) {
+			warns = append(warns, fmt.Sprintf("dropping facet with unsafe field %q", f.Field))
 			continue
 		}
-		facets = append(facets, catalog.Facet{Field: f.Field, Value: f.Value})
+		facets = append(facets, catalog.Facet{Field: f.Field, Value: f.Value, Tokens: f.Tokens,
+			MapField: f.MapField, MapKey: f.MapKey})
 	}
 	scope := catalog.Scope{Timeframe: tf}
 	if msg.Lens != "" {
 		if i := lensIndexByName(spec, msg.Lens); i >= 0 {
 			scope.Lens = i
 		} else {
-			warn = statusErr(fmt.Sprintf("navigate: %s has no %q lens", spec.Name, msg.Lens))
+			warns = append(warns, fmt.Sprintf("%s has no %q lens", spec.Name, msg.Lens))
 		}
 	}
-	// Route through pushViewMsg so the facets-before-Init ordering (and any
-	// future handling there) stays in one place.
-	push := func() tea.Msg {
-		return pushViewMsg{spec: spec, scope: scope, replace: true, facets: facets}
+	v := newTableView(a.ds, spec, scope)
+	if f := strings.TrimSpace(msg.Filter); f != "" {
+		v.setFilter(f)
 	}
-	return tea.Batch(warn, push)
+	v.searches = msg.Searches
+	v.facets = facets
+	return v, warns, nil
 }
 
 // lensIndexByName returns the index of the named lens in the spec, or -1.

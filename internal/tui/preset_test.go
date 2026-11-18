@@ -16,7 +16,7 @@ func TestSavePresetFromFacetManager(t *testing.T) {
 	a, err := newApp(Options{
 		ContextName: "test",
 		SafetyLevel: "readonly",
-		InitialView: "logs",
+		Launch:      NavigateMsg{Target: "logs"},
 		SavePreset: func(p NamedPreset) error {
 			facets := make([]workspace.PresetFacet, 0, len(p.Facets))
 			for _, f := range p.Facets {

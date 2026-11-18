@@ -33,7 +33,7 @@ func (h *helpOverlay) View(width, height int) string {
 		keys  []keyHint
 	}{
 		{"Navigation", []keyHint{
-			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>, :nav <type|id|name>, :ctx [name] — bare :ctx opens a picker)"},
+			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>, :query <dql>, :nav <type|id|name>, :ctx [name] — bare :ctx opens a picker)"},
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
 			{"0-9", "global bookmarks: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws — on an entered page 1-9 address the innermost numbered strip: its tabs, or the active tab's lens strip when it shows one (0 still jumps home, esc restores all bookmarks)"},
 			{"esc / -", "back / toggle last two views"},
