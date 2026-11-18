@@ -544,7 +544,7 @@ func (v *tableView) Hints() []keyHint {
 		hints = append(hints, keyHint{"f", "facets"})
 	}
 	if len(v.searches) > 0 || len(v.facets) > 0 {
-		hints = append(hints, keyHint{"F", "clear facets"})
+		hints = append(hints, keyHint{"F", "clear facets"}, keyHint{"W", "save preset"})
 	}
 	hints = append(hints, keyHint{"J/K", "sort"})
 	if v.spec.RawReadable {
@@ -847,6 +847,8 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return v.openFacets()
 	case "F":
 		return v.clearFacets()
+	case "W", "shift+w":
+		return v.requestSavePreset()
 	case "esc":
 		if v.filter != "" {
 			v.filterInput.SetValue("")

@@ -125,14 +125,96 @@ func (o *presetSaveOverlay) View(width, height int) string {
 		theme.OverlayBox.Render(b.String()))
 }
 
+func (p NamedPreset) narrowing() string {
+	var parts []string
+	if p.Timeframe != "" {
+		parts = append(parts, p.Timeframe)
+	}
+	for _, f := range p.Facets {
+		parts = append(parts, f.Label())
+	}
+	for _, s := range p.Searches {
+		parts = append(parts, "⌕"+s)
+	}
+	if len(parts) == 0 {
+		return "—"
+	}
+	return strings.Join(parts, "  ")
+}
+
+// presetPicker is the overlay behind `:preset` with no name: name, target
+// view, and the saved facets/searches. Enter applies the highlighted preset.
+type presetPicker struct {
+	app *app
+	sel int
+}
+
+func (a *app) openPresetPicker() tea.Cmd {
+	names := a.presetNames()
+	if len(names) == 0 {
+		return statusErr("no presets — open f and press W to save one")
+	}
+	a.overlay = &presetPicker{app: a}
+	return nil
+}
+
+func (p *presetPicker) Hints() []keyHint {
+	return []keyHint{{"enter", "open"}, {"j/k", "move"}, {"esc", "cancel"}}
+}
+
+func (p *presetPicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
+	a := p.app
+	names := a.presetNames()
+	n := len(names)
+	key := msg.String()
+	switch key {
+	case "esc":
+		a.overlay = nil
+		return nil
+	case "enter":
+		a.overlay = nil
+		if p.sel >= n || p.sel < 0 {
+			return nil
+		}
+		return a.applyNamedPreset(names[p.sel])
+	}
+	if moveSel(key, &p.sel, n) {
+		return nil
+	}
+	if idx, ok := digitIndex(key, n); ok {
+		a.overlay = nil
+		return a.applyNamedPreset(names[idx])
+	}
+	return nil
+}
+
+func (p *presetPicker) View(width, height int) string {
+	a := p.app
+	names := a.presetNames()
+	var b strings.Builder
+	b.WriteString(theme.OverlayTitle.Render("presets") + "  " +
+		theme.Dim.Render("name · view they open · saved filters") + "\n\n")
+	nameW, viewW, narrW := 22, 12, 40
+	limit := max(height-7, 4)
+	overlayRows(&b, len(names), p.sel, limit, func(i int) string {
+		pr := a.presets[names[i]]
+		row := pad(fmt.Sprintf("%d · %s", i+1, pr.Name), nameW) + " " +
+			pad(pr.View, viewW) + " " + pad(pr.narrowing(), narrW)
+		if i == p.sel {
+			return theme.Selected.Render(" " + row)
+		}
+		return " " + theme.HeaderVal.Render(pad(pr.Name, nameW)) + " " +
+			theme.Badge.Render(pad(pr.View, viewW)) + " " +
+			theme.Dim.Render(pad(pr.narrowing(), narrW))
+	})
+	b.WriteString("\n" + theme.Dim.Render("enter open · j/k move · W in the facet manager saves"))
+	return centerOverlay(width, height, b.String())
+}
+
 func (a *app) applyNamedPreset(name string) tea.Cmd {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		names := a.presetNames()
-		if len(names) == 0 {
-			return statusErr("no presets — open f and press W to save one")
-		}
-		return status("presets: " + strings.Join(names, ", ") + " — :preset <name>")
+		return a.openPresetPicker()
 	}
 	p, ok := a.presets[name]
 	if !ok {

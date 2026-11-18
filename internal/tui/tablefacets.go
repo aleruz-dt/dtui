@@ -91,6 +91,29 @@ func (v *tableView) clearFacets() tea.Cmd {
 	return tea.Batch(v.Refresh(), markHistory, status("facets cleared"))
 }
 
+func isSavePresetKey(k string) bool { return k == "W" || k == "shift+w" }
+
+// requestSavePreset asks the app to name and persist this table's server-side
+// narrowing. Works from any DQL catalog table, not only the facet overlay.
+func (v *tableView) requestSavePreset() tea.Cmd {
+	if v.spec.API != "" {
+		return statusErr("presets need a DQL-backed view")
+	}
+	if len(v.facets)+len(v.searches) == 0 {
+		return statusErr("nothing to save — add a facet (f) or server search first")
+	}
+	facets := append([]catalog.Facet{}, v.facets...)
+	searches := append([]string{}, v.searches...)
+	view := v.spec.Name
+	tf := v.scope.Timeframe.Label
+	if v.facetMode != facetOff {
+		v.closeFacets()
+	}
+	return func() tea.Msg {
+		return requestSavePresetMsg{view: view, tf: tf, facets: facets, searches: searches}
+	}
+}
+
 // addSearch stacks (or, replacing, swaps in) a server-side search term.
 func (v *tableView) addSearch(term string, replace bool) tea.Cmd {
 	if replace {
@@ -285,22 +308,10 @@ func (v *tableView) handleFacetKey(msg tea.KeyMsg) tea.Cmd {
 			return v.removeFacetEntry()
 		}
 		fallthrough
-	case "W":
-		if msg.String() == "W" && v.facetMode == facetFieldStage {
-			facets := append([]catalog.Facet{}, v.facets...)
-			searches := append([]string{}, v.searches...)
-			view := v.spec.Name
-			tf := v.scope.Timeframe.Label
-			v.closeFacets()
-			return func() tea.Msg {
-				return requestSavePresetMsg{view: view, tf: tf, facets: facets, searches: searches}
-			}
-		}
-		if msg.String() == "W" {
-			break
-		}
-		fallthrough
 	default:
+		if isSavePresetKey(msg.String()) {
+			return v.requestSavePreset()
+		}
 		var cmd tea.Cmd
 		v.facetInput, cmd = v.facetInput.Update(msg)
 		if v.facetMode == facetFieldStage {

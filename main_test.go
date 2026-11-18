@@ -83,6 +83,19 @@ segments:
 	}
 }
 
+func TestListPresetsIsACommand(t *testing.T) {
+	found := false
+	for _, c := range rootCmd.Commands() {
+		if c.Name() == "list-presets" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("list-presets must be a cobra subcommand so `dtui --context prod list-presets` is not parsed as a view")
+	}
+}
+
 func TestResolveLaunchNarrowing(t *testing.T) {
 	ws, err := workspace.Load(writeWorkspaceFile(t, `
 presets:

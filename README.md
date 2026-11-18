@@ -230,11 +230,13 @@ dtui pods             # jump straight into a view
 dtui --context prod   # session-local override, never persisted
 dtui --preset payments-errors   # named facet preset (from .dtui.yaml or personal save)
 dtui logs --facet loglevel=ERROR
-dtui --list-presets
+dtui list-presets
+dtui --context prod list-presets
 ```
 
 Press `?` inside the TUI for the full key reference, `:` to browse views, and
-`q` to quit. dtui refuses to start without a terminal (or inside an AI-agent
+`q` to quit. `:preset` lists saved facet presets (name, target view, filters);
+`:preset <name>` opens one. dtui refuses to start without a terminal (or inside an AI-agent
 environment): it is interactive only. It keeps its own UI state (navigation
 history) under `~/.local/state/dtui/`.
 

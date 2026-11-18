@@ -9,11 +9,37 @@ import (
 	"text/tabwriter"
 
 	"github.com/adrg/xdg"
+	"github.com/spf13/cobra"
 
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/workspace"
 )
+
+var listPresetsCmd = &cobra.Command{
+	Use:   "list-presets",
+	Short: "Print named facet presets and exit",
+	Long:  "Print presets from .dtui.yaml and ~/.local/state/dtui/presets.yaml. Does not need a TTY.",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		presets, _ := loadPresetCatalog()
+		writePresetList(cmd.OutOrStdout(), presets)
+		return nil
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(listPresetsCmd)
+}
+
+func loadPresetCatalog() (*workspace.Workspace, []string) {
+	ws, warnings := loadWorkspace()
+	personal, personalWarn := loadPersonalPresets()
+	if personalWarn != "" {
+		warnings = append(warnings, personalWarn)
+	}
+	return workspace.MergePresetCatalog(ws, personal), warnings
+}
 
 // launchNarrowing is the resolved --preset / --facet input applied to the
 // first catalog table. Empty fields mean "not set".

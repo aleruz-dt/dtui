@@ -90,7 +90,8 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
   dtui --preset payments-errors
   dtui logs --preset payments-errors
   dtui logs --facet loglevel=ERROR
-  dtui --list-presets`,
+  dtui list-presets
+  dtui --context prod list-presets`,
 	Args:              cobra.MaximumNArgs(2),
 	ValidArgsFunction: viewCompletion,
 	SilenceUsage:      true,
