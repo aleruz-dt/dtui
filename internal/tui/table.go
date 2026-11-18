@@ -493,7 +493,7 @@ func (v *tableView) Hints() []keyHint {
 	case facetFieldStage:
 		hints := []keyHint{{"type", "find attribute"}, {"↑/↓", "move"}, {"enter", "add / edit"}}
 		if len(v.searches)+len(v.facets) > 0 {
-			hints = append(hints, keyHint{"ctrl+x", "remove"})
+			hints = append(hints, keyHint{"ctrl+x", "remove"}, keyHint{"W", "save preset"})
 		}
 		return append(hints, keyHint{"esc", "close"})
 	case facetValueStage:

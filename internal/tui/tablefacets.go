@@ -285,6 +285,21 @@ func (v *tableView) handleFacetKey(msg tea.KeyMsg) tea.Cmd {
 			return v.removeFacetEntry()
 		}
 		fallthrough
+	case "W":
+		if msg.String() == "W" && v.facetMode == facetFieldStage {
+			facets := append([]catalog.Facet{}, v.facets...)
+			searches := append([]string{}, v.searches...)
+			view := v.spec.Name
+			tf := v.scope.Timeframe.Label
+			v.closeFacets()
+			return func() tea.Msg {
+				return requestSavePresetMsg{view: view, tf: tf, facets: facets, searches: searches}
+			}
+		}
+		if msg.String() == "W" {
+			break
+		}
+		fallthrough
 	default:
 		var cmd tea.Cmd
 		v.facetInput, cmd = v.facetInput.Update(msg)

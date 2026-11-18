@@ -32,9 +32,18 @@ type Options struct {
 	InitialView string // catalog view name or alias; "" = problems
 	// InitialArg is the optional CLI argument for the initial view — only
 	// nav takes one (`dtui nav <type|id|name>`); ignored elsewhere.
-	InitialArg       string
+	InitialArg string
+	// InitialFacets and InitialSearches are server-side narrowing applied to
+	// the first catalog table (CLI --preset / --facet). Ignored when the
+	// initial view is not a table.
+	InitialFacets    []catalog.Facet
+	InitialSearches  []string
 	HistoryPath      string // navigation-history file; "" = in-memory only
 	QueryHistoryPath string // submitted-DQL history file; "" = in-memory only
+	// Presets are named facet sets available to :preset this session
+	// (workspace + personal). SavePreset persists a new one; nil disables save.
+	Presets    []NamedPreset
+	SavePreset func(NamedPreset) error
 
 	// SegmentSource backs the segment picker and workspace seeding; nil
 	// disables both. Constructed in the dtui main package (no HTTP here).
@@ -170,8 +179,9 @@ type app struct {
 	// UI-picker segments carry none.
 	segPTags map[string][]string
 
-	hist  *historyStore
-	qhist *queryHistory
+	hist    *historyStore
+	qhist   *queryHistory
+	presets map[string]NamedPreset
 
 	status    string
 	statusErr bool
@@ -216,6 +226,12 @@ func newApp(opts Options) (*app, error) {
 		hist:        loadHistory(opts.HistoryPath, opts.ContextName),
 		qhist:       loadQueryHistory(opts.QueryHistoryPath),
 		primaryTags: opts.WorkspacePrimaryTags,
+		presets:     map[string]NamedPreset{},
+	}
+	for _, p := range opts.Presets {
+		if p.Name != "" {
+			a.presets[p.Name] = p
+		}
 	}
 	if tf, ok := catalog.ParseTimeframe(opts.InitialTimeframe); ok {
 		a.tf = tf
@@ -231,6 +247,14 @@ func newApp(opts Options) (*app, error) {
 	// `dtui nav <arg>` — same routing as the :nav command-bar argument.
 	if _, isNav := initial.(*navView); isNav && strings.TrimSpace(opts.InitialArg) != "" {
 		initial = a.navViewFor(strings.TrimSpace(opts.InitialArg))
+	}
+	if tv, ok := initial.(*tableView); ok {
+		if len(opts.InitialFacets) > 0 {
+			tv.facets = opts.InitialFacets
+		}
+		if len(opts.InitialSearches) > 0 {
+			tv.searches = opts.InitialSearches
+		}
 	}
 	a.stack = []viewModel{initial}
 	return a, nil
@@ -421,6 +445,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 
 	case NavigateMsg:
 		return a.navigateExternal(msg)
+
+	case requestSavePresetMsg:
+		return a.openPresetSave(msg)
 
 	case inspectMsg:
 		return a.navigate(newInspectorView(a.ds, msg.title, msg.rec), false)

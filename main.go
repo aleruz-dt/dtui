@@ -33,9 +33,12 @@ import (
 var version = "dev"
 
 var (
-	cfgFile     string
-	contextName string
-	noAgent     bool
+	cfgFile         string
+	contextName     string
+	noAgent         bool
+	presetName      string
+	facetFlags      []string
+	listPresetsFlag bool
 )
 
 var rootCmd = &cobra.Command{
@@ -81,11 +84,31 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
   dtui nav payments
 
   # Launch against a specific context (session-local, never persisted)
-  dtui --context prod`,
+  dtui --context prod
+
+  # Named facet preset from .dtui.yaml (session-local)
+  dtui --preset payments-errors
+  dtui logs --preset payments-errors
+  dtui logs --facet loglevel=ERROR
+  dtui --list-presets`,
 	Args:              cobra.MaximumNArgs(2),
 	ValidArgsFunction: viewCompletion,
 	SilenceUsage:      true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// A committed .dtui.yaml supplies workspace defaults; a broken
+		// one must never brick dtui — errors degrade to a startup warning.
+		ws, wsWarnings := loadWorkspace()
+		personal, personalWarn := loadPersonalPresets()
+		if personalWarn != "" {
+			wsWarnings = append(wsWarnings, personalWarn)
+		}
+		presetCatalog := workspace.MergePresetCatalog(ws, personal)
+
+		if listPresetsFlag {
+			writePresetList(cmd.OutOrStdout(), presetCatalog)
+			return nil
+		}
+
 		if !noAgent {
 			if info := aidetect.Detect(); info.Detected {
 				return fmt.Errorf("dtui is interactive-only and does not run in AI agent sessions (pass --no-agent if this session was misdetected)")
@@ -95,10 +118,6 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			return fmt.Errorf("dtui requires a terminal (stdout is not a TTY)")
 		}
 
-		// A committed .dtui.yaml supplies workspace defaults; a broken
-		// one must never brick dtui — errors degrade to a startup warning.
-		ws, wsWarnings := loadWorkspace()
-
 		view := "home"
 		if ws != nil && ws.View != "" {
 			if isBespokeView(ws.View) || catalog.Lookup(ws.View) != nil {
@@ -107,8 +126,10 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 				wsWarnings = append(wsWarnings, fmt.Sprintf("unknown workspace view %q — starting on home", ws.View))
 			}
 		}
+		cliView := ""
 		viewArg := ""
 		if len(args) >= 1 {
+			cliView = args[0]
 			view = args[0]
 		}
 		if len(args) == 2 {
@@ -120,6 +141,15 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			}
 			viewArg = args[1]
 		}
+
+		narrow, err := resolveLaunchNarrowing(cliView, presetCatalog, presetName, facetFlags)
+		if err != nil {
+			return err
+		}
+		if narrow.view != "" {
+			view = narrow.view
+		}
+
 		// Only an explicit CLI argument can still be unknown here (the
 		// workspace view fell back above) — that stays a hard error.
 		if !isBespokeView(view) && catalog.Lookup(view) == nil {
@@ -162,13 +192,20 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			Contexts:         contextNames(cfg),
 			InitialView:      view,
 			InitialArg:       viewArg,
+			InitialFacets:    narrow.facets,
+			InitialSearches:  narrow.searches,
 			HistoryPath:      historyPath(),
 			QueryHistoryPath: queryHistoryPath(),
+			Presets:          namedPresets(presetCatalog),
+			SavePreset:       savePersonalPreset(personalPresetsPath()),
 		}
 		if ws != nil {
 			opts.WorkspaceSegments = workspaceSegments(ws)
 			opts.WorkspacePrimaryTags = ws.PrimaryTags
 			opts.InitialTimeframe = ws.Timeframe
+		}
+		if narrow.tf != "" {
+			opts.InitialTimeframe = narrow.tf
 		}
 		switch {
 		case len(wsWarnings) > 0:
@@ -347,6 +384,11 @@ func workspaceNotice(ws *workspace.Workspace) string {
 	if ws.View != "" {
 		parts = append(parts, "view "+ws.View)
 	}
+	if n := len(ws.Presets); n == 1 {
+		parts = append(parts, "1 preset")
+	} else if n > 1 {
+		parts = append(parts, fmt.Sprintf("%d presets", n))
+	}
 	if len(parts) == 0 {
 		return ""
 	}
@@ -403,10 +445,20 @@ func viewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]str
 	return append([]string{"home", "query", "nav"}, catalog.Names()...), cobra.ShellCompDirectiveNoFileComp
 }
 
+func presetCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	ws, _ := loadWorkspace()
+	personal, _ := loadPersonalPresets()
+	return workspace.MergePresetCatalog(ws, personal).PresetNames(), cobra.ShellCompDirectiveNoFileComp
+}
+
 func main() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "dtctl config file (searches .dtctl.yaml upward, then $XDG_CONFIG_HOME/dtctl/config; env: DTCTL_CONFIG)")
 	rootCmd.PersistentFlags().StringVar(&contextName, "context", "", "use a specific context for this session (env: DTCTL_CONTEXT; not persisted)")
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "launch even if an AI agent environment is detected")
+	rootCmd.Flags().StringVar(&presetName, "preset", "", "named facet preset from .dtui.yaml (session-local; not auto-applied)")
+	rootCmd.Flags().StringArrayVar(&facetFlags, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
+	rootCmd.Flags().BoolVar(&listPresetsFlag, "list-presets", false, "print named presets from .dtui.yaml and exit")
+	_ = rootCmd.RegisterFlagCompletionFunc("preset", presetCompletion)
 
 	// dtctl reserves -v for --verbose; keep the long form only.
 	rootCmd.Flags().Bool("version", false, "version for dtui")
