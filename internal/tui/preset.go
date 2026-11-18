@@ -130,6 +130,13 @@ func (o *presetSaveOverlay) View(width, height int) string {
 		theme.OverlayBox.Render(b.String()))
 }
 
+func (p NamedPreset) source() string {
+	if p.Personal {
+		return "personal"
+	}
+	return "workspace"
+}
+
 func (p NamedPreset) narrowing() string {
 	var parts []string
 	if p.Timeframe != "" {
@@ -203,18 +210,19 @@ func (p *presetPicker) View(width, height int) string {
 	names := a.presetNames()
 	var b strings.Builder
 	b.WriteString(theme.OverlayTitle.Render("presets") + "  " +
-		theme.Dim.Render("name · view they open · saved filters") + "\n\n")
-	nameW, viewW, narrW := 22, 12, 40
+		theme.Dim.Render("name · view · source · saved filters") + "\n\n")
+	nameW, viewW, srcW, narrW := 22, 12, 10, 36
 	limit := max(height-7, 4)
 	overlayRows(&b, len(names), p.sel, limit, func(i int) string {
 		pr := a.presets[names[i]]
 		row := pad(fmt.Sprintf("%d · %s", i+1, pr.Name), nameW) + " " +
-			pad(pr.View, viewW) + " " + pad(pr.narrowing(), narrW)
+			pad(pr.View, viewW) + " " + pad(pr.source(), srcW) + " " + pad(pr.narrowing(), narrW)
 		if i == p.sel {
 			return theme.Selected.Render(" " + row)
 		}
 		return " " + theme.HeaderVal.Render(pad(pr.Name, nameW)) + " " +
 			theme.Badge.Render(pad(pr.View, viewW)) + " " +
+			theme.Dim.Render(pad(pr.source(), srcW)) + " " +
 			theme.Dim.Render(pad(pr.narrowing(), narrW))
 	})
 	b.WriteString("\n" + theme.Dim.Render("enter open · d delete personal · j/k move · W saves"))

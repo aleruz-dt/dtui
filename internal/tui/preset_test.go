@@ -100,19 +100,20 @@ func TestPresetPickerShowsViewAndOpens(t *testing.T) {
 			Facets: []catalog.Facet{{Field: "loglevel", Value: "ERROR"}},
 		},
 		"checkout-pods": {
-			Name:   "checkout-pods",
-			View:   "pods",
-			Facets: []catalog.Facet{{Field: "k8s.namespace.name", Value: "checkout"}},
+			Name:     "checkout-pods",
+			View:     "pods",
+			Facets:   []catalog.Facet{{Field: "k8s.namespace.name", Value: "checkout"}},
+			Personal: true,
 		},
 	}
 	deliver(a, a.applyNamedPreset(""))
 	p := overlayAs[*presetPicker](t, a)
 	body := p.View(120, 40)
-	if !strings.Contains(body, "payments-errors") || !strings.Contains(body, "logs") {
-		t.Errorf("picker missing logs preset:\n%s", body)
+	if !strings.Contains(body, "payments-errors") || !strings.Contains(body, "logs") || !strings.Contains(body, "workspace") {
+		t.Errorf("picker missing workspace logs preset:\n%s", body)
 	}
-	if !strings.Contains(body, "checkout-pods") || !strings.Contains(body, "pods") {
-		t.Errorf("picker missing pods preset:\n%s", body)
+	if !strings.Contains(body, "checkout-pods") || !strings.Contains(body, "pods") || !strings.Contains(body, "personal") {
+		t.Errorf("picker missing personal pods preset:\n%s", body)
 	}
 	// Sorted names: checkout-pods, payments-errors — enter opens the first.
 	press(a, key("enter"))
