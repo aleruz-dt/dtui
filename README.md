@@ -239,6 +239,7 @@ dtui query 'fetch logs, from:now()-1h | filter loglevel == "ERROR"'   # runs on 
 dtui query -f investigation.dql                 # or --dql '…'
 dtui list-presets
 dtui --context prod list-presets
+dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment
 dtui delete-preset payments-errors
 dtui --listen                                   # accept pages from dtui send (e.g. an agent)
 dtui send logs --facet loglevel=ERROR           # open a page in that TUI; esc returns
@@ -246,7 +247,7 @@ dtui send logs --facet loglevel=ERROR           # open a page in that TUI; esc r
 
 Press `?` inside the TUI for the full key reference, `:` to browse views, and
 `q` to quit. `:preset` lists saved facet presets (name, target view, filters);
-`:preset <name>` opens one; `d` in that list deletes a personal save (`dtui delete-preset` is the CLI form). dtui refuses to start without a terminal (or inside an AI-agent
+`:preset <name>` opens one; `d` in that list deletes a personal save (`dtui save-preset` and `dtui delete-preset` are the CLI forms). dtui refuses to start without a terminal (or inside an AI-agent
 environment): it is interactive only. An agent that has investigated something
 with dtctl can still hand you the evidence: the launch flags above are a stable
 contract for a command you paste and run yourself

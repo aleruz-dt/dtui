@@ -138,7 +138,7 @@ func TestCanonicalViewNameKeepsUnknownNames(t *testing.T) {
 }
 
 func TestListPresetsIsACommand(t *testing.T) {
-	need := map[string]bool{"list-presets": false, "delete-preset": false}
+	need := map[string]bool{"list-presets": false, "delete-preset": false, "save-preset": false, "send": false}
 	for _, c := range rootCmd.Commands() {
 		if _, ok := need[c.Name()]; ok {
 			need[c.Name()] = true

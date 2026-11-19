@@ -64,9 +64,78 @@ var deletePresetCmd = &cobra.Command{
 	},
 }
 
+var (
+	saveLaunch launchFlags
+	saveForce  bool
+)
+
+var savePresetCmd = &cobra.Command{
+	Use:   "save-preset NAME VIEW",
+	Short: "Save a personal named facet preset and exit",
+	Long: `Writes NAME to ~/.local/state/dtui/presets.yaml: VIEW narrowed by the
+same --facet, --search and --timeframe flags a launch takes, the file W
+writes from the TUI. Workspace presets in .dtui.yaml are not edited. Does not
+need a TTY.`,
+	Example: `  dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment --timeframe 2h
+  dtui logs --preset payments-errors`,
+	Args:              cobra.ExactArgs(2),
+	ValidArgsFunction: savePresetCompletion,
+	SilenceUsage:      true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, view := args[0], args[1]
+		if !workspace.ValidPresetName(name) {
+			return fmt.Errorf("preset name %q must be kebab-case (a-z, digits, hyphens)", name)
+		}
+		if len(saveLaunch.facets) == 0 && len(saveLaunch.searches) == 0 {
+			return fmt.Errorf("a preset needs at least one --facet or --search")
+		}
+		nav, err := resolveLaunch(view, "", nil, saveLaunch)
+		if err != nil {
+			return err
+		}
+		project, personal, warnings := loadPresetFiles()
+		writeLoadWarnings(cmd.ErrOrStderr(), warnings)
+		if _, ok := personal.LookupPreset(name); ok && !saveForce {
+			return fmt.Errorf("personal preset %q exists — pass --force to replace it", name)
+		}
+		p := workspace.Preset{View: canonicalViewName(nav.Target), Timeframe: nav.Timeframe,
+			Facets: presetFacets(nav.Facets), Searches: nav.Searches}
+		if err := workspace.SavePreset(personalPresetsPath(), name, p); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "saved preset %s (dtui --preset %s)\n", name, name)
+		if _, inWS := project.LookupPreset(name); inWS {
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: .dtui.yaml also defines %q\n", name)
+		}
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(listPresetsCmd)
 	rootCmd.AddCommand(deletePresetCmd)
+	savePresetCmd.Flags().StringArrayVar(&saveLaunch.facets, "facet", nil, "server-side field=value filter (repeatable)")
+	savePresetCmd.Flags().StringArrayVar(&saveLaunch.searches, "search", nil, "server-side text search (repeatable)")
+	savePresetCmd.Flags().StringVar(&saveLaunch.timeframe, "timeframe", "", "relative window the preset opens on: 45m, 2h, 7d")
+	savePresetCmd.Flags().BoolVar(&saveForce, "force", false, "replace an existing personal preset of the same name")
+	rootCmd.AddCommand(savePresetCmd)
+}
+
+// savePresetCompletion completes VIEW (the second argument) only.
+func savePresetCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 1 {
+		return viewCompletion(cmd, nil, toComplete)
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
+// presetFacets converts resolved NavFacets back to the preset file's shape.
+func presetFacets(in []tui.NavFacet) []workspace.PresetFacet {
+	out := make([]workspace.PresetFacet, 0, len(in))
+	for _, f := range in {
+		out = append(out, workspace.PresetFacet{Field: f.Field, Value: f.Value, Tokens: f.Tokens, MapField: f.MapField, MapKey: f.MapKey})
+	}
+	return out
 }
 
 // presetContext is the context a preset subcommand acts on: the same one a
