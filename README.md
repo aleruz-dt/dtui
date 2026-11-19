@@ -240,6 +240,8 @@ dtui query -f investigation.dql                 # or --dql '…'
 dtui list-presets
 dtui --context prod list-presets
 dtui delete-preset payments-errors
+dtui --listen                                   # accept pages from dtui send (e.g. an agent)
+dtui send logs --facet loglevel=ERROR           # open a page in that TUI; esc returns
 ```
 
 Press `?` inside the TUI for the full key reference, `:` to browse views, and
@@ -248,7 +250,10 @@ Press `?` inside the TUI for the full key reference, `:` to browse views, and
 environment): it is interactive only. An agent that has investigated something
 with dtctl can still hand you the evidence: the launch flags above are a stable
 contract for a command you paste and run yourself
-([ADR-0018](docs/adr/0018-launch-flags-are-a-handoff-contract.md)). It keeps its own UI state (navigation
+([ADR-0018](docs/adr/0018-launch-flags-are-a-handoff-contract.md)). Or start
+`dtui --listen` and let the agent run `dtui send` with the same arguments:
+each page opens in your TUI on top of what you were reading, never on another
+context ([ADR-0019](docs/adr/0019-agents-may-navigate-a-listening-tui.md)). It keeps its own UI state (navigation
 history) under `~/.local/state/dtui/`.
 
 Contexts and credentials are managed with dtctl; a `--context` flag or

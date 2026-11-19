@@ -1,6 +1,7 @@
 # ADR-0018: Launch flags are a handoff contract
 
-**Status:** Accepted · **Date:** 2026-11-18
+**Status:** Accepted; "never drive dtui" partially superseded by
+[ADR-0019](0019-agents-may-navigate-a-listening-tui.md) · **Date:** 2026-11-18
 
 ## Context
 
