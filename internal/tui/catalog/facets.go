@@ -323,8 +323,19 @@ var bucketTables = map[string]bool{
 // injected stages after the summarize. Pipes inside strings, backtick
 // identifiers, // comments and [ ] ( ) { } nesting (subqueries) are not stage
 // boundaries; a subquery is kept on its stage's line so line-based composition
-// never mistakes its inner | fields or | summarize for the outer pipeline's.
+// never mistakes its inner | fields or | summarize for the outer pipeline's
+// (comments inside a subquery are dropped, its whitespace runs collapse). A
+// query with unbalanced brackets is split ignoring nesting, so Grail's syntax
+// error still points at the user's own line.
 func StageLines(dql string) string {
+	if s, balanced := stageLines(dql, true); balanced {
+		return s
+	}
+	s, _ := stageLines(dql, false)
+	return s
+}
+
+func stageLines(dql string, nest bool) (string, bool) {
 	var out []string
 	var cur strings.Builder
 	flush := func() {
@@ -339,12 +350,20 @@ func StageLines(dql string) string {
 	for _, r := range dql {
 		switch {
 		case comment:
-			if r == '\n' {
-				comment = false
-				if depth == 0 {
-					flush()
+			if r != '\n' {
+				if depth > 0 {
 					continue
 				}
+				break
+			}
+			comment = false
+			if depth == 0 {
+				flush()
+				continue
+			}
+			r = ' '
+			if strings.HasSuffix(cur.String(), " ") {
+				continue
 			}
 		case quote != 0:
 			switch {
@@ -359,13 +378,25 @@ func StageLines(dql string) string {
 			quote = r
 		case r == '/' && strings.HasSuffix(cur.String(), "/"):
 			comment = true
-		case r == '[' || r == '(' || r == '{':
+			if depth > 0 {
+				s := strings.TrimSuffix(cur.String(), "/")
+				cur.Reset()
+				cur.WriteString(s)
+				continue
+			}
+		case nest && (r == '[' || r == '(' || r == '{'):
 			depth++
-		case (r == ']' || r == ')' || r == '}') && depth > 0:
+		case nest && (r == ']' || r == ')' || r == '}'):
+			if depth == 0 {
+				return "", false
+			}
 			depth--
 		case depth > 0:
-			if r == '\n' {
+			if r == '\n' || r == '\t' {
 				r = ' '
+			}
+			if r == ' ' && strings.HasSuffix(cur.String(), " ") {
+				continue
 			}
 		case r == '\n':
 			flush()
@@ -376,7 +407,7 @@ func StageLines(dql string) string {
 		cur.WriteRune(r)
 	}
 	flush()
-	return strings.Join(out, "\n")
+	return strings.Join(out, "\n"), depth == 0 && quote == 0
 }
 
 // sourceTable returns the table a query's first line fetches ("" when the
