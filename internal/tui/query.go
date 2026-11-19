@@ -32,11 +32,15 @@ type queryView struct {
 	width, height int
 }
 
+// maxDQLChars bounds a typed query — the editor and the `:query <dql>`
+// command bar alike, so one is never cut where the other is not.
+const maxDQLChars = 4096
+
 func newQueryView(ds *dataSource, dql string, tf catalog.Timeframe, hist *queryHistory) *queryView {
 	ta := newTextArea()
 	ta.Placeholder = "fetch logs | filter status == \"ERROR\"  (enter runs · ctrl+j newline · tab results)"
 	ta.SetHeight(3)
-	ta.CharLimit = 4096
+	ta.CharLimit = maxDQLChars
 	ta.ShowLineNumbers = false
 	ta.SetValue(dql)
 	ta.Focus()

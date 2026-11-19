@@ -266,6 +266,31 @@ func TestNavigateMsg(t *testing.T) {
 		}
 	})
 
+	t.Run("rejected target leaves the timeframe alone", func(t *testing.T) {
+		a := testApp(t, "home")
+		before := a.tf
+		_, cmd := a.Update(NavigateMsg{Target: "no-such-view", Timeframe: "30d"})
+		deliver(a, cmd)
+		if a.tf != before {
+			t.Errorf("tf = %q after a rejected deep link, want %q", a.tf.Label, before.Label)
+		}
+	})
+
+	t.Run("toggling back finds the covered view on the new window", func(t *testing.T) {
+		a := testApp(t, "hosts")
+		_, cmd := a.Update(NavigateMsg{Target: "pods", Timeframe: "30d"})
+		deliver(a, cmd)
+		_, cmd = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("-")})
+		deliver(a, cmd)
+		tv, ok := a.top().(*tableView)
+		if !ok || tv.spec.Name != "hosts" {
+			t.Fatalf("top = %T, want hosts after -", a.top())
+		}
+		if tv.scope.Timeframe.Label != a.tf.Label {
+			t.Errorf("hosts queries %q, header says %q", tv.scope.Timeframe.Label, a.tf.Label)
+		}
+	})
+
 	t.Run("lens and timeframe are applied", func(t *testing.T) {
 		a := testApp(t, "home")
 		_, cmd := a.Update(NavigateMsg{

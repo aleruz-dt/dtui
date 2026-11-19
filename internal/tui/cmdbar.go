@@ -43,7 +43,7 @@ func (a *app) openCmdPalette() tea.Cmd {
 	ci := newTextInput()
 	ci.Prompt = ":"
 	ci.PromptStyle = theme.Crumb
-	ci.CharLimit = 64
+	ci.CharLimit = len(":query ") + maxDQLChars
 	ci.Focus()
 	p := &cmdPalette{app: a, input: ci}
 	p.updateMatches()

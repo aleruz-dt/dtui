@@ -103,17 +103,21 @@ func TestCommandBarArgsPrefillFilter(t *testing.T) {
 	}
 }
 
-// `:query <dql>` runs the query, keeping whitespace inside string literals.
+// `:query <dql>` runs the query, keeping whitespace inside string literals,
+// and takes DQL as long as the query editor does.
 func TestCommandBarQueryRunsDQL(t *testing.T) {
-	a := testApp(t, "problems")
-	press(a, key(":"))
-	for _, r := range `query fetch logs | filter content == "a  b"` {
-		press(a, key(string(r)))
-	}
-	press(a, key("enter"))
-	qv, ok := a.top().(*queryView)
-	if !ok || qv.editing || qv.DQL() != `fetch logs | filter content == "a  b"` {
-		t.Fatalf("':query <dql>' → %T %q", a.top(), a.top().(dqlProvider).DQL())
+	long := `fetch logs | filter content == "a  b" | filter k8s.namespace.name == "checkout" and loglevel == "ERROR" | sort timestamp desc | limit 50`
+	for _, dql := range []string{`fetch logs | filter content == "a  b"`, long} {
+		a := testApp(t, "problems")
+		press(a, key(":"))
+		for _, r := range "query " + dql {
+			press(a, key(string(r)))
+		}
+		press(a, key("enter"))
+		qv, ok := a.top().(*queryView)
+		if !ok || qv.editing || qv.DQL() != dql {
+			t.Fatalf("':query <dql>' → %T %q", a.top(), a.top().(dqlProvider).DQL())
+		}
 	}
 }
 
