@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -733,13 +734,14 @@ func (a *app) navigateExternal(msg NavigateMsg) tea.Cmd {
 	if len(warns) > 0 {
 		warn = statusErr("navigate: " + strings.Join(warns, "; "))
 	}
-	// The covered stack becomes prev: it must query the window the header
-	// now advertises, so `-` does not return to a stale one.
-	var retime tea.Cmd
+	cmd := a.navigate(view, true)
+	// A deep link on a new window is a fresh entry point, as a context switch
+	// is: `-` must not return to a page on the old window, and re-timing the
+	// covered pages would refetch them all (ADR-0013).
 	if a.tf != prevTF {
-		retime = a.setTimeframe(a.tf)
+		a.prev = nil
 	}
-	return tea.Batch(warn, retime, a.navigate(view, true))
+	return tea.Batch(warn, cmd)
 }
 
 // launchView builds the page a NavigateMsg names, with its narrowing in place
@@ -775,8 +777,12 @@ func (a *app) launchPage(msg NavigateMsg, tf catalog.Timeframe, warns *[]string)
 	case "", "home":
 		return newHomeView(a.ds, tf), nil
 	case "query", "dql":
+		dql := strings.TrimSpace(msg.DQL)
+		if n := utf8.RuneCountInString(dql); n > maxDQLChars {
+			return nil, fmt.Errorf("query is %d characters; the query editor takes at most %d", n, maxDQLChars)
+		}
 		v := newQueryView(a.ds, "", tf, a.qhist)
-		if dql := strings.TrimSpace(msg.DQL); dql != "" {
+		if dql != "" {
 			v.submitted(dql)
 		}
 		return v, nil
