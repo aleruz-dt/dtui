@@ -177,7 +177,7 @@ func (a *app) openPresetPicker() tea.Cmd {
 }
 
 func (p *presetPicker) Hints() []keyHint {
-	return []keyHint{{"enter", "open"}, {"d", "delete personal"}, {"j/k", "move"}, {"esc", "cancel"}}
+	return []keyHint{{"enter/1-9", "open"}, {"d", "delete personal"}, {"j/k", "move"}, {"esc", "cancel"}}
 }
 
 func (p *presetPicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
@@ -221,17 +221,22 @@ func (p *presetPicker) View(width, height int) string {
 	limit := max(height-7, 4)
 	overlayRows(&b, len(names), p.sel, limit, func(i int) string {
 		pr := a.presets[names[i]]
-		row := pad(fmt.Sprintf("%d · %s", i+1, pr.Name), nameW) + " " +
+		// Only 1-9 open a row (digitIndex); later rows stay unnumbered.
+		label := "    " + pr.Name
+		if i < 9 {
+			label = fmt.Sprintf("%d · %s", i+1, pr.Name)
+		}
+		row := pad(label, nameW) + " " +
 			pad(pr.View, viewW) + " " + pad(pr.source(), srcW) + " " + pad(pr.narrowing(), narrW)
 		if i == p.sel {
 			return theme.Selected.Render(" " + row)
 		}
-		return " " + theme.HeaderVal.Render(pad(pr.Name, nameW)) + " " +
+		return " " + theme.HeaderVal.Render(pad(label, nameW)) + " " +
 			theme.Badge.Render(pad(pr.View, viewW)) + " " +
 			theme.Dim.Render(pad(pr.source(), srcW)) + " " +
 			theme.Dim.Render(pad(pr.narrowing(), narrW))
 	})
-	b.WriteString("\n" + theme.Dim.Render("enter open · d delete personal · j/k move · W saves"))
+	b.WriteString("\n" + theme.Dim.Render("enter/1-9 open · d delete personal · j/k move · W saves"))
 	return centerOverlay(width, height, b.String())
 }
 
