@@ -321,7 +321,9 @@ var bucketTables = map[string]bool{
 // composition splices stages by line, so a hand-typed one-liner
 // (`fetch logs | summarize …`, the query editor, `dtui --dql`) would get its
 // injected stages after the summarize. Pipes inside strings, backtick
-// identifiers and // comments are not stage boundaries.
+// identifiers, // comments and [ ] ( ) { } nesting (subqueries) are not stage
+// boundaries; a subquery is kept on its stage's line so line-based composition
+// never mistakes its inner | fields or | summarize for the outer pipeline's.
 func StageLines(dql string) string {
 	var out []string
 	var cur strings.Builder
@@ -333,13 +335,16 @@ func StageLines(dql string) string {
 	}
 	var quote rune // '"' or '`' while inside a literal
 	comment, escaped := false, false
+	depth := 0
 	for _, r := range dql {
 		switch {
 		case comment:
 			if r == '\n' {
 				comment = false
-				flush()
-				continue
+				if depth == 0 {
+					flush()
+					continue
+				}
 			}
 		case quote != 0:
 			switch {
@@ -354,6 +359,14 @@ func StageLines(dql string) string {
 			quote = r
 		case r == '/' && strings.HasSuffix(cur.String(), "/"):
 			comment = true
+		case r == '[' || r == '(' || r == '{':
+			depth++
+		case (r == ']' || r == ')' || r == '}') && depth > 0:
+			depth--
+		case depth > 0:
+			if r == '\n' {
+				r = ' '
+			}
 		case r == '\n':
 			flush()
 			continue

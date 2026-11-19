@@ -220,6 +220,7 @@ func resolveLaunchArg(msg *tui.NavigateMsg, arg string) error {
 		}
 		// The record sampler without a table would just re-browse the table
 		// catalog — that browser already exists as tables (as in viewFor).
+		// Deep links keep reaching records itself (TestEveryViewHasBothExits).
 		if spec.Name == "records" {
 			spec = catalog.Lookup("tables")
 		}

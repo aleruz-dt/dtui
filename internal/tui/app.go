@@ -441,15 +441,7 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return tea.Batch(cmds...)
 
 	case pushViewMsg:
-		view := newTableView(a.ds, msg.spec, msg.scope)
-		if msg.filter != "" {
-			view.setFilter(msg.filter)
-		}
-		// Inherited server narrowing must be in place before navigate runs
-		// Init (which composes and fires the query).
-		view.searches = msg.searches
-		view.facets = msg.facets
-		return a.navigate(view, msg.replace)
+		return a.navigate(a.narrowedTable(msg.spec, msg.scope, msg.filter, msg.searches, msg.facets), msg.replace)
 
 	case NavigateMsg:
 		return a.navigateExternal(msg)
@@ -816,13 +808,20 @@ func (a *app) launchView(msg NavigateMsg) (viewModel, []string, error) {
 			warns = append(warns, fmt.Sprintf("%s has no %q lens", spec.Name, msg.Lens))
 		}
 	}
+	return a.narrowedTable(spec, scope, strings.TrimSpace(msg.Filter), msg.Searches, facets), warns, nil
+}
+
+// narrowedTable builds a catalog table with its filter and server narrowing
+// in place: they must be set before navigate runs Init, which composes and
+// fires the query.
+func (a *app) narrowedTable(spec *catalog.Spec, scope catalog.Scope, filter string, searches []string, facets []catalog.Facet) *tableView {
 	v := newTableView(a.ds, spec, scope)
-	if f := strings.TrimSpace(msg.Filter); f != "" {
-		v.setFilter(f)
+	if filter != "" {
+		v.setFilter(filter)
 	}
-	v.searches = msg.Searches
+	v.searches = searches
 	v.facets = facets
-	return v, warns, nil
+	return v
 }
 
 // lensIndexByName returns the index of the named lens in the spec, or -1.

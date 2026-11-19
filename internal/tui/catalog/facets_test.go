@@ -274,11 +274,24 @@ func TestStageLines(t *testing.T) {
 		{`fetch logs | filter content == "q\"|" | limit 1`, "fetch logs\n| filter content == \"q\\\"|\"\n| limit 1"},
 		{"fetch logs | fieldsAdd `a|b` = 1", "fetch logs\n| fieldsAdd `a|b` = 1"},
 		{"fetch logs // tail | head\n| limit 1", "fetch logs // tail | head\n| limit 1"},
+		{"fetch logs | lookup [fetch dt.entity.host | fields id], sourceField: h, lookupField: id | limit 1",
+			"fetch logs\n| lookup [fetch dt.entity.host | fields id], sourceField: h, lookupField: id\n| limit 1"},
+		{"fetch logs\n| append [fetch logs\n  | summarize c = count()]\n| limit 1",
+			"fetch logs\n| append [fetch logs   | summarize c = count()]\n| limit 1"},
 	}
 	for _, tt := range tests {
 		if got := StageLines(tt.in); got != tt.want {
 			t.Errorf("StageLines(%q)\n got %q\nwant %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+// A subquery's own projection does not count as the outer pipeline's: the
+// outer fetch keeps its bucket pruning.
+func TestBucketEligibleIgnoresSubquery(t *testing.T) {
+	q := "fetch logs | lookup [fetch dt.entity.host | fields id, entity.name], sourceField: dt.entity.host, lookupField: id"
+	if !BucketEligible(q) {
+		t.Errorf("BucketEligible(%q) = false, want true", q)
 	}
 }
 
