@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -81,26 +82,11 @@ func (o *presetSaveOverlay) HandleKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "enter":
 		name := strings.TrimSpace(o.input.Value())
-		if !workspace.ValidPresetName(name) {
-			o.err = "name must be kebab-case (a-z, digits, hyphens)"
-			return nil
-		}
-		p := NamedPreset{
-			Name:      name,
-			View:      o.view,
-			Timeframe: o.tf,
-			Facets:    o.facets,
-			Searches:  o.searches,
-			Personal:  true,
-		}
-		if err := o.app.opts.SavePreset(p); err != nil {
+		draft := requestSavePresetMsg{view: o.view, tf: o.tf, facets: o.facets, searches: o.searches}
+		if err := o.app.savePreset(name, draft); err != nil {
 			o.err = err.Error()
 			return nil
 		}
-		if o.app.presets == nil {
-			o.app.presets = map[string]NamedPreset{}
-		}
-		o.app.presets[name] = p
 		o.app.overlay = nil
 		return status(fmt.Sprintf("saved preset %s — dtui --preset %s", name, name))
 	}
@@ -108,6 +94,26 @@ func (o *presetSaveOverlay) HandleKey(msg tea.KeyMsg) tea.Cmd {
 	o.input, cmd = o.input.Update(msg)
 	o.err = ""
 	return cmd
+}
+
+// savePreset persists a personal preset and makes it available to :preset
+// in this session. The W dialog and remote saves both go through it.
+func (a *app) savePreset(name string, d requestSavePresetMsg) error {
+	if a.opts.SavePreset == nil {
+		return errors.New("preset save is not wired in this session")
+	}
+	if !workspace.ValidPresetName(name) {
+		return errors.New("name must be kebab-case (a-z, digits, hyphens)")
+	}
+	p := NamedPreset{Name: name, View: d.view, Timeframe: d.tf, Facets: d.facets, Searches: d.searches, Personal: true}
+	if err := a.opts.SavePreset(p); err != nil {
+		return err
+	}
+	if a.presets == nil {
+		a.presets = map[string]NamedPreset{}
+	}
+	a.presets[name] = p
+	return nil
 }
 
 func (o *presetSaveOverlay) View(width, height int) string {

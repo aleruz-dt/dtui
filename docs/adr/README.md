@@ -26,7 +26,7 @@ can read in two minutes.
 | [0016](0016-detail-panes-show-real-grail-keys.md) | Detail panes show real Grail keys; app-derived values are labeled, not disguised |
 | [0017](0017-named-view-facet-presets.md) | Named view facet presets are local narrowing, not tenant config |
 | [0018](0018-launch-flags-are-a-handoff-contract.md) | Launch flags are a handoff contract; agents emit commands *(driving partially superseded by 0019)* |
-| [0019](0019-agents-may-navigate-a-listening-tui.md) | Agents may navigate a TUI started with `--listen`, pushing pages over a local socket |
+| [0019](0019-agents-may-navigate-a-listening-tui.md) | Agents may drive a TUI started with `--listen`: push pages and save personal presets over a local socket |
 
 New ADRs: next number, same three sections, `Accepted`/`Superseded` status.
 Record a decision when reversing it would ripple through more than one view.

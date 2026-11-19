@@ -9,72 +9,138 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// RemoteNavigate asks the running TUI to open a page and waits for the
-// outcome: the breadcrumb of the page it opened, or why it could not.
-// Options.Listen receives one; the main package serves it on a local socket
-// so an agent can drive the TUI the user is watching (ADR-0019).
-type RemoteNavigate func(NavigateMsg) (page string, err error)
+// RemoteRequest is one request to a listening TUI (ADR-0019): open Page on
+// top of the stack, save Page's narrowing as a personal preset, or both.
+// A save goes through the same path as W, so the preset lands in the file
+// and in this session's :preset list.
+type RemoteRequest struct {
+	Page   NavigateMsg `json:"page"`
+	Open   bool        `json:"open,omitempty"`
+	SaveAs string      `json:"save_as,omitempty"`
+}
+
+// RemoteResult reports what a request did: the breadcrumb of the page
+// opened and the name of the preset saved.
+type RemoteResult struct {
+	Page  string `json:"page,omitempty"`
+	Saved string `json:"saved,omitempty"`
+}
+
+// Remote hands a request to the running TUI and waits for the outcome.
+// Options.Listen receives one; the main package serves it on a local socket.
+type Remote func(RemoteRequest) (RemoteResult, error)
 
 // remoteReplyTimeout bounds how long a remote caller waits for the app to
 // take the message — a TUI blocked behind a modal must not hang the agent.
 const remoteReplyTimeout = 10 * time.Second
 
-// remoteNavigateMsg is a NavigateMsg from outside the process. Unlike a deep
-// link it pushes rather than replaces, so esc returns the user to where they
-// were, and it reports back on reply (buffered, never blocks Update).
-type remoteNavigateMsg struct {
-	nav   NavigateMsg
+// remoteMsg carries a RemoteRequest into Update. reply is buffered, so
+// answering never blocks Update.
+type remoteMsg struct {
+	req   RemoteRequest
 	reply chan remoteReply
 }
 
 type remoteReply struct {
-	page string
-	err  error
+	res RemoteResult
+	err error
 }
 
-func remoteNavigator(p *tea.Program) RemoteNavigate {
-	return func(nav NavigateMsg) (string, error) {
+func remoteHandler(p *tea.Program) Remote {
+	return func(req RemoteRequest) (RemoteResult, error) {
 		reply := make(chan remoteReply, 1)
-		go p.Send(remoteNavigateMsg{nav: nav, reply: reply})
+		go p.Send(remoteMsg{req: req, reply: reply})
 		select {
 		case r := <-reply:
-			return r.page, r.err
+			return r.res, r.err
 		case <-time.After(remoteReplyTimeout):
-			return "", errors.New("dtui did not answer in time")
+			return RemoteResult{}, errors.New("dtui did not answer in time")
 		}
 	}
 }
 
-// navigateRemote opens an agent-requested page on top of the stack. It never
-// switches context: the user chose the tenant this TUI shows, and an agent
-// silently repointing it would attribute data to the wrong environment.
-func (a *app) navigateRemote(msg remoteNavigateMsg) tea.Cmd {
-	respond := func(page string, err error) {
+// handleRemote opens and/or saves an agent-requested page. Opening pushes,
+// so esc returns the user to where they were, and never switches context:
+// the user chose the tenant this TUI shows. A save writes exactly what W
+// would on that page, and is refused if any of the page's narrowing was
+// dropped, so a preset never silently loses a filter.
+func (a *app) handleRemote(msg remoteMsg) tea.Cmd {
+	var res RemoteResult
+	respond := func(err error) {
 		if msg.reply != nil {
-			msg.reply <- remoteReply{page: page, err: err}
+			msg.reply <- remoteReply{res: res, err: err}
 		}
 	}
-	if c := strings.TrimSpace(msg.nav.Context); c != "" && c != a.opts.ContextName {
-		err := fmt.Errorf("this dtui is on context %q; it will not switch to %q", a.opts.ContextName, c)
-		respond("", err)
+	fail := func(err error) tea.Cmd {
+		respond(err)
 		return statusErr("agent: " + err.Error())
 	}
-	prevTF := a.tf
-	view, warns, err := a.launchView(msg.nav)
-	if err != nil {
-		respond("", err)
-		return statusErr("agent: " + err.Error())
+	req := msg.req
+	if !req.Open && req.SaveAs == "" {
+		return fail(errors.New("request neither opens a page nor saves a preset"))
 	}
-	cmd := a.navigate(view, false)
-	if a.tf != prevTF {
-		a.prev = nil
+
+	var view viewModel
+	var warns []string
+	var cmd tea.Cmd
+	if req.Open {
+		if c := strings.TrimSpace(req.Page.Context); c != "" && c != a.opts.ContextName {
+			return fail(fmt.Errorf("this dtui is on context %q; it will not switch to %q", a.opts.ContextName, c))
+		}
+		prevTF := a.tf
+		v, w, err := a.launchView(req.Page)
+		if err != nil {
+			return fail(err)
+		}
+		view, warns = v, w
+		cmd = a.navigate(view, false)
+		if a.tf != prevTF {
+			a.prev = nil
+		}
+		res.Page = view.Crumb()
+	} else {
+		v, err := a.launchPage(req.Page, a.tf, &warns)
+		if err != nil {
+			return fail(err)
+		}
+		view = v
 	}
-	page := view.Crumb()
+
+	var done []string
+	if res.Page != "" {
+		done = append(done, "opened "+res.Page)
+	}
+	if req.SaveAs != "" {
+		if err := a.saveRemotePreset(req.SaveAs, view, warns); err != nil {
+			return tea.Batch(cmd, fail(err))
+		}
+		res.Saved = req.SaveAs
+		done = append(done, "saved preset "+req.SaveAs)
+	}
 	if len(warns) > 0 {
 		w := strings.Join(warns, "; ")
-		respond(page, fmt.Errorf("opened with warnings: %s", w))
-		return tea.Batch(cmd, statusErr("agent opened "+page+" — "+w))
+		respond(fmt.Errorf("with warnings: %s", w))
+		return tea.Batch(cmd, statusErr("agent "+strings.Join(done, ", ")+" — "+w))
 	}
-	respond(page, nil)
-	return tea.Batch(cmd, status("agent opened "+page+" (esc returns)"))
+	respond(nil)
+	note := "agent " + strings.Join(done, ", ")
+	if res.Page != "" {
+		note += " (esc returns)"
+	}
+	return tea.Batch(cmd, status(note))
+}
+
+func (a *app) saveRemotePreset(name string, view viewModel, warns []string) error {
+	if len(warns) > 0 {
+		return fmt.Errorf("not saving preset %s: %s", name, strings.Join(warns, "; "))
+	}
+	tv, ok := view.(*tableView)
+	if !ok {
+		return errors.New("presets need a DQL catalog table")
+	}
+	draft, err := tv.presetDraft()
+	if err != nil {
+		return err
+	}
+	return a.savePreset(name, draft)
 }

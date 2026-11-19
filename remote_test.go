@@ -23,31 +23,32 @@ func shortSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "s.sock")
 }
 
-func serveFake(t *testing.T, path string, navigate tui.RemoteNavigate) {
+func serveFake(t *testing.T, path string, handle tui.Remote) {
 	t.Helper()
 	ln, err := listenSocket(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	go serveRemote(ln, navigate)
+	go serveRemote(ln, handle)
 }
 
-func TestSendDeliversNavigationAndReply(t *testing.T) {
+func TestSendDeliversRequestAndReply(t *testing.T) {
 	path := shortSocketPath(t)
-	got := make(chan tui.NavigateMsg, 1)
-	serveFake(t, path, func(nav tui.NavigateMsg) (string, error) {
-		got <- nav
-		return "logs", nil
+	got := make(chan tui.RemoteRequest, 1)
+	serveFake(t, path, func(req tui.RemoteRequest) (tui.RemoteResult, error) {
+		got <- req
+		return tui.RemoteResult{Page: "logs", Saved: req.SaveAs}, nil
 	})
-	want := tui.NavigateMsg{Target: "logs", Searches: []string{"timeout"}, Facets: []tui.NavFacet{{Field: "loglevel", Value: "ERROR"}}}
+	want := tui.RemoteRequest{Open: true, SaveAs: "errs", Page: tui.NavigateMsg{Target: "logs", Searches: []string{"timeout"},
+		Facets: []tui.NavFacet{{Field: "loglevel", Value: "ERROR"}}}}
 	reply, err := sendRemote(path, want)
-	if err != nil || reply.Page != "logs" || reply.Error != "" {
+	if err != nil || reply.Page != "logs" || reply.Saved != "errs" || reply.Error != "" {
 		t.Fatalf("reply = %+v, err = %v", reply, err)
 	}
-	nav := <-got
-	if nav.Target != "logs" || nav.Searches[0] != "timeout" || nav.Facets[0] != want.Facets[0] {
-		t.Errorf("server got %+v, want %+v", nav, want)
+	req := <-got
+	if !req.Open || req.SaveAs != "errs" || req.Page.Target != "logs" || req.Page.Searches[0] != "timeout" || req.Page.Facets[0] != want.Page.Facets[0] {
+		t.Errorf("server got %+v, want %+v", req, want)
 	}
 	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("socket mode = %v (err %v), want owner-only 0600", fi.Mode().Perm(), err)
@@ -56,16 +57,18 @@ func TestSendDeliversNavigationAndReply(t *testing.T) {
 
 func TestSendSurfacesTUIErrors(t *testing.T) {
 	path := shortSocketPath(t)
-	serveFake(t, path, func(tui.NavigateMsg) (string, error) { return "", errors.New(`unknown view "nope"`) })
-	reply, err := sendRemote(path, tui.NavigateMsg{Target: "nope"})
+	serveFake(t, path, func(tui.RemoteRequest) (tui.RemoteResult, error) {
+		return tui.RemoteResult{}, errors.New(`unknown view "nope"`)
+	})
+	reply, err := sendRemote(path, tui.RemoteRequest{Open: true, Page: tui.NavigateMsg{Target: "nope"}})
 	if err != nil || !strings.Contains(reply.Error, "unknown view") {
 		t.Fatalf("reply = %+v, err = %v; want the TUI's error passed back", reply, err)
 	}
 }
 
 func TestSendWithoutListenerSaysHowToStartOne(t *testing.T) {
-	_, err := sendRemote(shortSocketPath(t), tui.NavigateMsg{})
-	if err == nil || !strings.Contains(err.Error(), "dtui --listen") {
+	_, err := sendRemote(shortSocketPath(t), tui.RemoteRequest{})
+	if !errors.Is(err, errNoListener) || !strings.Contains(err.Error(), "dtui --listen") {
 		t.Fatalf("err = %v, want a hint to run dtui --listen", err)
 	}
 }
@@ -100,9 +103,9 @@ func TestListenReplacesStaleSocketButNotALiveOne(t *testing.T) {
 
 func TestBadRequestGetsAnError(t *testing.T) {
 	path := shortSocketPath(t)
-	serveFake(t, path, func(tui.NavigateMsg) (string, error) {
-		t.Error("navigate must not run for a malformed request")
-		return "", nil
+	serveFake(t, path, func(tui.RemoteRequest) (tui.RemoteResult, error) {
+		t.Error("the TUI must not see a malformed request")
+		return tui.RemoteResult{}, nil
 	})
 	c, err := net.Dial("unix", path)
 	if err != nil {

@@ -68,9 +68,9 @@ func TestTUIHasNoDirectTenantAccess(t *testing.T) {
 	}
 }
 
-// TestTUIOpensNoListener pins remote navigation's shape (ADR-0019): the
+// TestTUIOpensNoListener pins remote requests' shape (ADR-0019): the
 // transport lives in the main package, and internal/tui only exposes
-// RemoteNavigate, which carries a NavigateMsg and nothing else.
+// Remote, which carries a page and an optional preset name.
 func TestTUIOpensNoListener(t *testing.T) {
 	err := filepath.WalkDir("internal/tui", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
