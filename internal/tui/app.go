@@ -34,10 +34,10 @@ type Options struct {
 	// view, argument and launch flags, built like a deep link. Context is
 	// ignored here: the caller already chose the context.
 	Launch NavigateMsg
-	// Listen, when set, starts serving remote navigation (dtui --listen)
+	// Listen, when set, starts serving remote requests (dtui --listen)
 	// before the program runs; stop is called on exit. The transport lives
 	// in the main package so this package opens no listener.
-	Listen           func(RemoteNavigate) (stop func(), err error)
+	Listen           func(Remote) (stop func(), err error)
 	HistoryPath      string // navigation-history file; "" = in-memory only
 	QueryHistoryPath string // submitted-DQL history file; "" = in-memory only
 	// Presets are named facet sets available to :preset this session
@@ -108,7 +108,7 @@ func Run(opts Options) error {
 	}
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if opts.Listen != nil {
-		stop, err := opts.Listen(remoteNavigator(p))
+		stop, err := opts.Listen(remoteHandler(p))
 		if err != nil {
 			return err
 		}
@@ -459,8 +459,8 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 	case NavigateMsg:
 		return a.navigateExternal(msg)
 
-	case remoteNavigateMsg:
-		return a.navigateRemote(msg)
+	case remoteMsg:
+		return a.handleRemote(msg)
 
 	case requestSavePresetMsg:
 		return a.openPresetSave(msg)

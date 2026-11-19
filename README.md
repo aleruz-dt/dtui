@@ -243,6 +243,7 @@ dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment
 dtui delete-preset payments-errors
 dtui --listen                                   # accept pages from dtui send (e.g. an agent)
 dtui send logs --facet loglevel=ERROR           # open a page in that TUI; esc returns
+dtui send logs --facet loglevel=ERROR --save errs   # … and save it as W would
 ```
 
 Press `?` inside the TUI for the full key reference, `:` to browse views, and
@@ -254,7 +255,7 @@ contract for a command you paste and run yourself
 ([ADR-0018](docs/adr/0018-launch-flags-are-a-handoff-contract.md)). Or start
 `dtui --listen` and let the agent run `dtui send` with the same arguments:
 each page opens in your TUI on top of what you were reading, never on another
-context ([ADR-0019](docs/adr/0019-agents-may-navigate-a-listening-tui.md)). It keeps its own UI state (navigation
+context, and `--save NAME` (or `dtui save-preset`) saves it as if you pressed `W` ([ADR-0019](docs/adr/0019-agents-may-navigate-a-listening-tui.md)). It keeps its own UI state (navigation
 history) under `~/.local/state/dtui/`.
 
 Contexts and credentials are managed with dtctl; a `--context` flag or

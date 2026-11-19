@@ -67,30 +67,40 @@ in agent sessions. It never switches the TUI's context.`,
 		if err != nil {
 			return err
 		}
-		reply, err := sendRemote(path, nav)
+		reply, err := sendRemote(path, tui.RemoteRequest{Page: nav, Open: true, SaveAs: sendSaveAs})
 		if err != nil {
 			return err
 		}
-		if reply.Error != "" {
-			if reply.Page != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "opened %s\n", reply.Page)
-			}
-			return errors.New(reply.Error)
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "opened %s\n", reply.Page)
-		return nil
+		return reportRemote(cmd.OutOrStdout(), reply)
 	},
 }
 
+var sendSaveAs string
+
 func init() {
 	addLaunchFlags(sendCmd, &sendLaunch)
+	sendCmd.Flags().StringVar(&sendSaveAs, "save", "", "also save the opened page's narrowing as this personal preset, as W would")
 	rootCmd.AddCommand(sendCmd)
 }
 
 // remoteReply is the wire answer to one request.
 type remoteReply struct {
-	Page  string `json:"page,omitempty"`
+	tui.RemoteResult
 	Error string `json:"error,omitempty"`
+}
+
+// reportRemote prints what the TUI did and returns its error, if any.
+func reportRemote(w io.Writer, r remoteReply) error {
+	if r.Page != "" {
+		fmt.Fprintf(w, "opened %s\n", r.Page)
+	}
+	if r.Saved != "" {
+		fmt.Fprintf(w, "saved preset %s — dtui --preset %s\n", r.Saved, r.Saved)
+	}
+	if r.Error != "" {
+		return errors.New(r.Error)
+	}
+	return nil
 }
 
 // socketPath is the per-user socket for a session name. The name is
@@ -103,8 +113,8 @@ func socketPath(name string) (string, error) {
 }
 
 // listenRemote returns the Options.Listen hook for a session.
-func listenRemote(name string) func(tui.RemoteNavigate) (func(), error) {
-	return func(navigate tui.RemoteNavigate) (func(), error) {
+func listenRemote(name string) func(tui.Remote) (func(), error) {
+	return func(handle tui.Remote) (func(), error) {
 		path, err := socketPath(name)
 		if err != nil {
 			return nil, err
@@ -113,7 +123,7 @@ func listenRemote(name string) func(tui.RemoteNavigate) (func(), error) {
 		if err != nil {
 			return nil, err
 		}
-		go serveRemote(ln, navigate)
+		go serveRemote(ln, handle)
 		return func() {
 			_ = ln.Close()
 			_ = os.Remove(path)
@@ -148,42 +158,47 @@ func listenSocket(path string) (net.Listener, error) {
 	return ln, nil
 }
 
-func serveRemote(ln net.Listener, navigate tui.RemoteNavigate) {
+func serveRemote(ln net.Listener, handle tui.Remote) {
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		handleRemote(c, navigate)
+		serveConn(c, handle)
 	}
 }
 
-// handleRemote serves one request. Connections are handled one at a time:
-// navigations are ordered, and the TUI shows one page at a time anyway.
-func handleRemote(c net.Conn, navigate tui.RemoteNavigate) {
+// serveConn serves one request. Connections are handled one at a time:
+// requests are ordered, and the TUI shows one page at a time anyway.
+func serveConn(c net.Conn, handle tui.Remote) {
 	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(15 * time.Second))
-	var nav tui.NavigateMsg
+	var req tui.RemoteRequest
 	var reply remoteReply
-	if err := json.NewDecoder(io.LimitReader(c, maxRemoteRequest)).Decode(&nav); err != nil {
+	if err := json.NewDecoder(io.LimitReader(c, maxRemoteRequest)).Decode(&req); err != nil {
 		reply.Error = "bad request: " + err.Error()
-	} else if page, err := navigate(nav); err != nil {
-		reply = remoteReply{Page: page, Error: err.Error()}
 	} else {
-		reply.Page = page
+		res, err := handle(req)
+		reply.RemoteResult = res
+		if err != nil {
+			reply.Error = err.Error()
+		}
 	}
 	_ = json.NewEncoder(c).Encode(reply)
 }
 
-// sendRemote delivers one NavigateMsg and returns the TUI's answer.
-func sendRemote(path string, nav tui.NavigateMsg) (remoteReply, error) {
+// errNoListener means no TUI is serving the session's socket.
+var errNoListener = errors.New("no dtui is listening")
+
+// sendRemote delivers one request and returns the TUI's answer.
+func sendRemote(path string, req tui.RemoteRequest) (remoteReply, error) {
 	c, err := net.DialTimeout("unix", path, 2*time.Second)
 	if err != nil {
-		return remoteReply{}, fmt.Errorf("no dtui is listening on %s — start one with dtui --listen", path)
+		return remoteReply{}, fmt.Errorf("%w on %s — start one with dtui --listen", errNoListener, path)
 	}
 	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
-	if err := json.NewEncoder(c).Encode(nav); err != nil {
+	if err := json.NewEncoder(c).Encode(req); err != nil {
 		return remoteReply{}, err
 	}
 	var reply remoteReply

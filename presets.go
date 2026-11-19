@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -59,17 +60,22 @@ var saveLaunch launchFlags
 var savePresetCmd = &cobra.Command{
 	Use:   "save-preset NAME VIEW",
 	Short: "Save a personal named facet preset and exit",
-	Long: `Writes NAME to ~/.local/state/dtui/presets.yaml: VIEW narrowed by the
-same --facet, --search and --timeframe flags a launch takes, through the
-same save W uses in the TUI (an existing personal preset is replaced). Workspace presets in .dtui.yaml are not edited. Does not
-need a TTY.`,
-	Example: `  dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment --timeframe 2h
+	Long: `Saves VIEW narrowed by --facet and --search as the personal preset NAME,
+exactly as W would on that page: no timeframe is pinned, and an existing
+personal preset of the same name is replaced. When a dtui --listen is
+running (see --session) the save goes through it, so its :preset list has
+the new preset at once; otherwise ~/.local/state/dtui/presets.yaml is
+written directly. .dtui.yaml is never edited. Does not need a TTY.`,
+	Example: `  dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment
   dtui logs --preset payments-errors`,
 	Args:              cobra.ExactArgs(2),
 	ValidArgsFunction: savePresetCompletion,
 	SilenceUsage:      true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, view := args[0], args[1]
+		if !workspace.ValidPresetName(name) {
+			return fmt.Errorf("preset name %q must be kebab-case (a-z, digits, hyphens)", name)
+		}
 		if len(saveLaunch.facets) == 0 && len(saveLaunch.searches) == 0 {
 			return fmt.Errorf("a preset needs at least one --facet or --search")
 		}
@@ -77,7 +83,18 @@ need a TTY.`,
 		if err != nil {
 			return err
 		}
-		p := tui.NamedPreset{Name: name, View: canonicalViewName(nav.Target), Timeframe: nav.Timeframe,
+		path, err := socketPath(remoteSession)
+		if err != nil {
+			return err
+		}
+		reply, err := sendRemote(path, tui.RemoteRequest{Page: nav, SaveAs: name})
+		if !errors.Is(err, errNoListener) {
+			if err != nil {
+				return err
+			}
+			return reportRemote(cmd.OutOrStdout(), reply)
+		}
+		p := tui.NamedPreset{Name: name, View: canonicalViewName(nav.Target),
 			Facets: catalogFacetsFromNav(nav.Facets), Searches: nav.Searches, Personal: true}
 		if err := savePersonalPreset(personalPresetsPath())(p); err != nil {
 			return err
@@ -92,7 +109,6 @@ func init() {
 	rootCmd.AddCommand(deletePresetCmd)
 	savePresetCmd.Flags().StringArrayVar(&saveLaunch.facets, "facet", nil, "server-side field=value filter (repeatable)")
 	savePresetCmd.Flags().StringArrayVar(&saveLaunch.searches, "search", nil, "server-side text search (repeatable)")
-	savePresetCmd.Flags().StringVar(&saveLaunch.timeframe, "timeframe", "", "relative window the preset opens on: 45m, 2h, 7d")
 	rootCmd.AddCommand(savePresetCmd)
 }
 

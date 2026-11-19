@@ -346,18 +346,24 @@ Guards, checked before entering the alternate screen: not a TTY → error; agent
 mode → structured error envelope (`"ui is interactive-only"`); `--plain` →
 error suggesting non-interactive equivalents.
 
-**Remote navigation**
+**Remote requests**
 ([ADR-0019](../adr/0019-agents-may-navigate-a-listening-tui.md)).
 `dtui --listen [--session NAME]` serves `$XDG_RUNTIME_DIR/dtui/<NAME>.sock`
 (mode `0600`, default name `default`) from the main package (`remote.go`).
-`dtui send` takes the launch grammar above, resolves it with the same
-`resolveLaunch`, and writes one JSON `NavigateMsg`. The TUI answers one JSON
-reply: the page's breadcrumb, or an error. Inside `internal/tui` the request
-becomes a `remoteNavigateMsg` (`remote.go`). Unlike a deep link it *pushes*
-through `launchView`, refuses a `Context` other than the session's, and sets
-"agent opened …" on the status line. Warnings such as a dropped unsafe facet
-open the page and still come back as an error. `send` needs no TTY and skips
-the agent guard.
+Each connection carries one JSON `RemoteRequest`: a `NavigateMsg` page,
+`open`, and `save_as`. The TUI answers one JSON reply: the page's
+breadcrumb, the preset saved, or an error. `dtui send` resolves the launch
+grammar with `resolveLaunch` and sets `open` (and `save_as` with `--save`).
+`dtui save-preset` sends a save-only request, and writes the personal file
+itself only when nothing is listening.
+
+Inside `internal/tui` (`remote.go`), opening *pushes* through `launchView`
+(unlike a deep link), refuses a `Context` other than the session's, and sets
+"agent opened …" on the status line. Saving takes `tableView.presetDraft`
+and `app.savePreset`, the same pair `W` uses, so the file, the `:preset`
+list and the saved shape match a keypress. Warnings such as a dropped unsafe
+facet still open the page, come back as an error, and block the save. `send`
+and `save-preset` need no TTY and skip the agent guard.
 
 ### Layout
 
