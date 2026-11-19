@@ -151,3 +151,16 @@ func TestRemoteSaveRefusesALossyPreset(t *testing.T) {
 		t.Errorf("saved %+v, want nothing", *saved)
 	}
 }
+
+func TestRemoteSaveRefusesAnotherContextAndReportsItsOwn(t *testing.T) {
+	a := testApp(t, "pods")
+	saved := withSaves(a)
+	r := remoteDo(t, a, RemoteRequest{SaveAs: "errs", Page: NavigateMsg{Target: "logs", Context: "other", Searches: []string{"a"}}})
+	if r.err == nil || len(*saved) != 0 {
+		t.Fatalf("reply = %+v, saves = %d; want a refusal and no save", r, len(*saved))
+	}
+	r = remoteDo(t, a, RemoteRequest{SaveAs: "errs", Page: NavigateMsg{Target: "logs", Searches: []string{"a"}}})
+	if r.err != nil || r.res.Context != "test" {
+		t.Fatalf("reply = %+v, want the save reported under this TUI's context", r)
+	}
+}

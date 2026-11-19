@@ -267,7 +267,8 @@ An agent can't run the TUI, but it can drive one you started:
    example `dtui send logs --facet loglevel=ERROR --search timeout`. The page
    opens on top of what you were reading; `esc` returns.
 3. `--save NAME` on `send`, or `dtui save-preset NAME VIEW --facet …`,
-   saves the narrowing as a personal preset, as if you pressed `W`.
+   saves the narrowing as a personal preset of the TUI's context, as if you
+   pressed `W`.
 
 `send` prints what it opened or saved and exits 1 with the reason on
 failure, including when no dtui is listening. It never switches your context
