@@ -70,7 +70,11 @@ sessions — and restores a page with its full breadcrumb trail.
 Press ? inside the TUI for the full key reference.
 
 dtui reads dtctl's contexts and credentials; create and manage them with
-dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
+dtctl (dtctl ctx set). dtui is read-only and interactive-only.
+
+An agent cannot run the TUI, but it can drive one the user started with
+--listen: dtui send opens pages in it and dtui save-preset saves presets
+as W would. See dtui send --help.`,
 	Example: `  # Launch on the home triage view (default)
   dtui
 
@@ -106,7 +110,12 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
   dtui list-presets
   dtui --context prod list-presets
   dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment
-  dtui delete-preset payments-errors`,
+  dtui delete-preset payments-errors
+
+  # Let an agent drive this TUI: you run the first, the agent the others
+  dtui --listen
+  dtui send logs --facet loglevel=ERROR --search timeout
+  dtui send logs --facet loglevel=ERROR --save payments-errors`,
 	Args:              cobra.MaximumNArgs(2),
 	ValidArgsFunction: viewCompletion,
 	SilenceUsage:      true,
@@ -117,7 +126,7 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 
 		if !noAgent {
 			if info := aidetect.Detect(); info.Detected {
-				return fmt.Errorf("dtui is interactive-only and does not run in AI agent sessions (pass --no-agent if this session was misdetected)")
+				return fmt.Errorf("dtui is interactive-only and does not run in AI agent sessions (pass --no-agent if this session was misdetected); to show the user a page, run 'dtui send ...' against their 'dtui --listen', or hand them the dtui command")
 			}
 		}
 		if !term.IsTerminal(int(os.Stdout.Fd())) {
@@ -499,7 +508,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "launch even if an AI agent environment is detected")
 	addLaunchFlags(rootCmd, &launch)
 	rootCmd.Flags().BoolVar(&listen, "listen", false, "accept page requests from dtui send on a local socket (e.g. from an agent)")
-	rootCmd.PersistentFlags().StringVar(&remoteSession, "session", defaultSession, "socket name for --listen and send, to run several listening TUIs")
+	rootCmd.PersistentFlags().StringVar(&remoteSession, "session", defaultSession, "socket name for --listen, send and save-preset, to run several listening TUIs")
 
 	// dtctl reserves -v for --verbose; keep the long form only.
 	rootCmd.Flags().Bool("version", false, "version for dtui")
