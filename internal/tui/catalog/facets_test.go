@@ -277,7 +277,11 @@ func TestStageLines(t *testing.T) {
 		{"fetch logs | lookup [fetch dt.entity.host | fields id], sourceField: h, lookupField: id | limit 1",
 			"fetch logs\n| lookup [fetch dt.entity.host | fields id], sourceField: h, lookupField: id\n| limit 1"},
 		{"fetch logs\n| append [fetch logs\n  | summarize c = count()]\n| limit 1",
-			"fetch logs\n| append [fetch logs   | summarize c = count()]\n| limit 1"},
+			"fetch logs\n| append [fetch logs | summarize c = count()]\n| limit 1"},
+		{"fetch logs\n| lookup [fetch dt.entity.host // hosts | only\n  | fields id], sourceField: h, lookupField: id",
+			"fetch logs\n| lookup [fetch dt.entity.host | fields id], sourceField: h, lookupField: id"},
+		{"fetch logs | filter in(a, {1,2}\n| limit 1", "fetch logs\n| filter in(a, {1,2}\n| limit 1"},
+		{"fetch logs | filter a == 1)\n| limit 1", "fetch logs\n| filter a == 1)\n| limit 1"},
 	}
 	for _, tt := range tests {
 		if got := StageLines(tt.in); got != tt.want {
@@ -289,9 +293,13 @@ func TestStageLines(t *testing.T) {
 // A subquery's own projection does not count as the outer pipeline's: the
 // outer fetch keeps its bucket pruning.
 func TestBucketEligibleIgnoresSubquery(t *testing.T) {
-	q := "fetch logs | lookup [fetch dt.entity.host | fields id, entity.name], sourceField: dt.entity.host, lookupField: id"
-	if !BucketEligible(q) {
-		t.Errorf("BucketEligible(%q) = false, want true", q)
+	for _, q := range []string{
+		"fetch logs | lookup [fetch dt.entity.host | fields id, entity.name], sourceField: dt.entity.host, lookupField: id",
+		"fetch logs\n| lookup [fetch dt.entity.host // hosts\n  | fields id], sourceField: dt.entity.host, lookupField: id",
+	} {
+		if !BucketEligible(q) {
+			t.Errorf("BucketEligible(%q) = false, want true", q)
+		}
 	}
 }
 
