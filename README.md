@@ -308,7 +308,8 @@ segments:
 
 # presets — named facet/search sets for one catalog view. Never auto-applied;
 # select with `dtui --preset <name>` or `:preset <name>`. W in the facet
-# manager saves to ~/.local/state/dtui/presets.yaml instead of this file.
+# manager saves to ~/.local/state/dtui/presets/<context>.yaml (one file per
+# dtctl context) instead of this file.
 presets:
   payments-errors:
     view: logs

@@ -92,6 +92,11 @@ type ContextWiring struct {
 	Executor      *exec.DQLExecutor
 	Sources       map[string]Source
 	SegmentSource SegmentLister
+	// Presets, SavePreset and DeletePreset are the new context's: personal
+	// presets are per context, so a switch swaps the :preset list too.
+	Presets      []NamedPreset
+	SavePreset   func(NamedPreset) error
+	DeletePreset func(name string) error
 }
 
 // Run launches the TUI and blocks until the user quits.
@@ -896,6 +901,13 @@ func (a *app) handleCtxSwitched(msg ctxSwitchedMsg) tea.Cmd {
 	a.segErr = ""
 	a.overlay = nil            // an open picker would show the old tenant's rows
 	a.hist.ctx = w.ContextName // H now records and lists the new context
+	a.opts.SavePreset, a.opts.DeletePreset = w.SavePreset, w.DeletePreset
+	a.presets = map[string]NamedPreset{}
+	for _, p := range w.Presets {
+		if p.Name != "" {
+			a.presets[p.Name] = p
+		}
+	}
 	a.updatePrimaryTags()
 	cmd := a.navigate(newHomeView(a.ds, a.tf), true)
 	a.prev = nil // '-' must not resurrect the old tenant's views

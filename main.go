@@ -98,8 +98,7 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// A committed .dtui.yaml supplies workspace defaults; a broken
 		// one must never brick dtui — errors degrade to a startup warning.
-		ws, personal, wsWarnings := loadPresetFiles()
-		presetCatalog := workspace.MergePresetCatalog(ws, personal)
+		ws, wsWarnings := loadWorkspace()
 
 		if !noAgent {
 			if info := aidetect.Detect(); info.Detected {
@@ -134,6 +133,24 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			viewArg = args[1]
 		}
 
+		cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+		if w := applyWorkspaceContext(cfg, ws); w != "" {
+			wsWarnings = append(wsWarnings, w)
+		}
+		ctxObj, err := cfg.CurrentContextObj()
+		if err != nil {
+			return fmt.Errorf("%w — list contexts with 'dtctl ctx list' or pick one with --context <name>", err)
+		}
+
+		// Personal presets belong to the context, so they load once it is known.
+		personal, personalWarn := loadPersonalPresets(cfg.CurrentContext)
+		if personalWarn != "" {
+			wsWarnings = append(wsWarnings, personalWarn)
+		}
+		presetCatalog := workspace.MergePresetCatalog(ws, personal)
 		narrow, err := resolveLaunchNarrowing(cliView, presetCatalog, presetName, facetFlags)
 		if err != nil {
 			return err
@@ -146,25 +163,6 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 		// workspace view fell back above) — that stays a hard error.
 		if !isBespokeView(view) && catalog.Lookup(view) == nil {
 			return fmt.Errorf("unknown view %q (available: home, query, nav, %s)", view, strings.Join(catalog.Names(), ", "))
-		}
-
-		cfg, err := loadConfig()
-		if err != nil {
-			return err
-		}
-		// Context precedence: --context flag > DTCTL_CONTEXT env var >
-		// workspace environment match > config current-context. Session-local
-		// either way — dtui never writes the shared config.
-		if contextOverride() == "" && ws != nil && ws.Environment != "" {
-			if name, ok := findContextByEnvironment(cfg, ws.Environment); ok {
-				cfg.CurrentContext = name
-			} else {
-				wsWarnings = append(wsWarnings, fmt.Sprintf("no context matches workspace environment %s — using %s", ws.Environment, cfg.CurrentContext))
-			}
-		}
-		ctxObj, err := cfg.CurrentContextObj()
-		if err != nil {
-			return fmt.Errorf("%w — list contexts with 'dtctl ctx list' or pick one with --context <name>", err)
 		}
 		// dtui ships its own client identity:
 		// tenant-side request logs must distinguish dtui from dtctl.
@@ -190,8 +188,8 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 			QueryHistoryPath: queryHistoryPath(),
 			Presets:          mergedNamedPresets(ws, personal),
 			WorkspacePresets: namedPresets(ws, false),
-			SavePreset:       savePersonalPreset(personalPresetsPath()),
-			DeletePreset:     deletePersonalPreset(personalPresetsPath()),
+			SavePreset:       savePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
+			DeletePreset:     deletePersonalPreset(personalPresetsPath(cfg.CurrentContext)),
 		}
 		if ws != nil {
 			opts.WorkspaceSegments = workspaceSegments(ws)
@@ -244,6 +242,22 @@ func contextOverride() string {
 	return os.Getenv("DTCTL_CONTEXT")
 }
 
+// applyWorkspaceContext applies the context precedence: --context flag >
+// DTCTL_CONTEXT env var > workspace environment match > config
+// current-context. Session-local either way — dtui never writes the shared
+// config. It returns a warning when the workspace environment matches no
+// context.
+func applyWorkspaceContext(cfg *session.Config, ws *workspace.Workspace) string {
+	if contextOverride() != "" || ws == nil || ws.Environment == "" {
+		return ""
+	}
+	if name, ok := findContextByEnvironment(cfg, ws.Environment); ok {
+		cfg.CurrentContext = name
+		return ""
+	}
+	return fmt.Sprintf("no context matches workspace environment %s — using %s", ws.Environment, cfg.CurrentContext)
+}
+
 // contextNames lists the configured context names (:ctx shows them).
 func contextNames(cfg *session.Config) []string {
 	names := make([]string, 0, len(cfg.Contexts))
@@ -282,7 +296,13 @@ func switchContext(name string) (*tui.ContextWiring, error) {
 	if err != nil {
 		return nil, err
 	}
+	ws, _ := loadWorkspace()
+	personal, _ := loadPersonalPresets(name)
+	path := personalPresetsPath(name)
 	return &tui.ContextWiring{
+		Presets:       mergedNamedPresets(ws, personal),
+		SavePreset:    savePersonalPreset(path),
+		DeletePreset:  deletePersonalPreset(path),
 		ContextName:   name,
 		Environment:   ctxObj.Environment,
 		SafetyLevel:   string(ctxObj.GetEffectiveSafetyLevel()),
@@ -440,7 +460,11 @@ func viewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]str
 }
 
 func presetCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	ws, _ := loadPresetCatalog()
+	ctx, err := presetContext()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	ws, _ := loadPresetCatalog(ctx)
 	return ws.PresetNames(), cobra.ShellCompDirectiveNoFileComp
 }
 
@@ -448,7 +472,11 @@ func personalPresetCompletion(cmd *cobra.Command, args []string, toComplete stri
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	_, personal, _ := loadPresetFiles()
+	ctx, err := presetContext()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	personal, _ := loadPersonalPresets(ctx)
 	if personal == nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -459,7 +487,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "dtctl config file (searches .dtctl.yaml upward, then $XDG_CONFIG_HOME/dtctl/config; env: DTCTL_CONFIG)")
 	rootCmd.PersistentFlags().StringVar(&contextName, "context", "", "use a specific context for this session (env: DTCTL_CONTEXT; not persisted)")
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "launch even if an AI agent environment is detected")
-	rootCmd.Flags().StringVar(&presetName, "preset", "", "named facet preset from .dtui.yaml or ~/.local/state/dtui/presets.yaml (session-local; not auto-applied)")
+	rootCmd.Flags().StringVar(&presetName, "preset", "", "named facet preset from .dtui.yaml or this context's personal presets (session-local; not auto-applied)")
 	rootCmd.Flags().StringArrayVar(&facetFlags, "facet", nil, "server-side field=value filter on the starting view (repeatable)")
 	_ = rootCmd.RegisterFlagCompletionFunc("preset", presetCompletion)
 

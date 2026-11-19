@@ -22,7 +22,7 @@ type NamedPreset struct {
 	Timeframe string
 	Facets    []catalog.Facet
 	Searches  []string
-	// Personal is true when this copy lives in ~/.local/state/dtui/presets.yaml
+	// Personal is true when this copy lives in the context's personal file
 	// and can be deleted from the TUI / delete-preset. Workspace (.dtui.yaml)
 	// presets stay false.
 	Personal bool
@@ -125,7 +125,7 @@ func (o *presetSaveOverlay) View(width, height int) string {
 		parts = append(parts, "⌕"+s)
 	}
 	b.WriteString("\n " + theme.Dim.Render(strings.Join(parts, "  ")) + "\n")
-	b.WriteString("\n" + theme.Dim.Render("writes ~/.local/state/dtui/presets.yaml — not .dtui.yaml; does not pin the session timeframe"))
+	b.WriteString("\n" + theme.Dim.Render("saved for context "+o.app.opts.ContextName+" only — not .dtui.yaml; does not pin the session timeframe"))
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Position(0.2),
 		theme.OverlayBox.Render(b.String()))
 }

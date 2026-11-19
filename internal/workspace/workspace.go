@@ -57,7 +57,7 @@ type Workspace struct {
 	PrimaryTags []string `yaml:"primary-tags,omitempty"`
 	// Presets are named facet/search sets for a catalog view. They are never
 	// applied automatically — the CLI --preset flag or :preset selects one.
-	// Personal copies also live in ~/.local/state/dtui/presets.yaml. Keys are
+	// Personal copies live in ~/.local/state/dtui/presets/<context>.yaml. Keys are
 	// kebab-case names.
 	Presets map[string]Preset `yaml:"presets,omitempty"`
 

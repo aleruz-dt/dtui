@@ -242,3 +242,27 @@ func TestPresetPickerDoesNotDeleteWorkspace(t *testing.T) {
 		t.Fatalf("picker closed: %T", a.overlay)
 	}
 }
+
+func TestContextSwitchSwapsPersonalPresets(t *testing.T) {
+	a := testApp(t, "home")
+	a.opts.ContextName = "alpha"
+	a.presets = map[string]NamedPreset{"alpha-only": {Name: "alpha-only", View: "logs", Personal: true}}
+	var savedTo string
+	a.opts.SwitchContext = func(name string) (*ContextWiring, error) {
+		return &ContextWiring{
+			ContextName: name, Environment: "https://" + name + ".example.invalid", SafetyLevel: "readonly",
+			Presets:    []NamedPreset{{Name: "beta-only", View: "pods", Personal: true}},
+			SavePreset: func(NamedPreset) error { savedTo = name; return nil },
+		}, nil
+	}
+	deliver(a, a.switchContext("beta"))
+	if _, ok := a.presets["alpha-only"]; ok {
+		t.Error("alpha's preset survived the switch to beta")
+	}
+	if _, ok := a.presets["beta-only"]; !ok {
+		t.Errorf("beta's presets not loaded: %v", a.presets)
+	}
+	if err := a.opts.SavePreset(NamedPreset{Name: "x"}); err != nil || savedTo != "beta" {
+		t.Errorf("save after switch went to %q, want beta", savedTo)
+	}
+}
