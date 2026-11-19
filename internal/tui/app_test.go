@@ -276,18 +276,18 @@ func TestNavigateMsg(t *testing.T) {
 		}
 	})
 
-	t.Run("toggling back finds the covered view on the new window", func(t *testing.T) {
+	t.Run("a new window costs one query and leaves no stale page behind", func(t *testing.T) {
 		a := testApp(t, "hosts")
+		deliver(a, a.Init())
+		var ran []string
+		a.ds.runFn = func(q string) ([]map[string]any, error) { ran = append(ran, q); return nil, nil }
 		_, cmd := a.Update(NavigateMsg{Target: "pods", Timeframe: "30d"})
 		deliver(a, cmd)
-		_, cmd = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("-")})
-		deliver(a, cmd)
-		tv, ok := a.top().(*tableView)
-		if !ok || tv.spec.Name != "hosts" {
-			t.Fatalf("top = %T, want hosts after -", a.top())
+		if len(ran) != 1 || !strings.Contains(ran[0], "k8s.pod") {
+			t.Errorf("deep link ran %d queries, want only the pods query (ADR-0013): %q", len(ran), ran)
 		}
-		if tv.scope.Timeframe.Label != a.tf.Label {
-			t.Errorf("hosts queries %q, header says %q", tv.scope.Timeframe.Label, a.tf.Label)
+		if len(a.prev) != 0 {
+			t.Errorf("prev = %d views on the old window, want none", len(a.prev))
 		}
 	})
 
