@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/adrg/xdg"
@@ -14,7 +13,7 @@ import (
 // dir and no workspace file, returning stdout and the error.
 func runSavePreset(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	saveLaunch, saveForce = launchFlags{}, false
+	saveLaunch = launchFlags{}
 	var out bytes.Buffer
 	rootCmd.SetOut(&out)
 	rootCmd.SetErr(&out)
@@ -52,20 +51,17 @@ func TestSavePresetWritesWhatLaunchReads(t *testing.T) {
 	}
 }
 
-func TestSavePresetRefusesOverwriteWithoutForce(t *testing.T) {
+func TestSavePresetReplacesLikeW(t *testing.T) {
 	isolatePresetState(t)
 	if _, err := runSavePreset(t, "errs", "logs", "--facet", "loglevel=ERROR"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runSavePreset(t, "errs", "logs", "--facet", "loglevel=WARN"); err == nil || !strings.Contains(err.Error(), "--force") {
-		t.Fatalf("err = %v, want a refusal naming --force", err)
-	}
-	if _, err := runSavePreset(t, "errs", "logs", "--facet", "loglevel=WARN", "--force"); err != nil {
-		t.Fatalf("--force: %v", err)
+	if _, err := runSavePreset(t, "errs", "logs", "--facet", "loglevel=WARN"); err != nil {
+		t.Fatal(err)
 	}
 	w, _ := workspace.Load(personalPresetsPath())
 	if p, _ := w.LookupPreset("errs"); p.Facets[0].Value != "WARN" {
-		t.Errorf("value = %q, want the forced WARN", p.Facets[0].Value)
+		t.Errorf("value = %q, want the second save to replace the first", p.Facets[0].Value)
 	}
 }
 
