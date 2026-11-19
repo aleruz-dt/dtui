@@ -38,14 +38,23 @@ var sendCmd = &cobra.Command{
 of what they are looking at (esc returns). It takes the same view, argument
 and flags as a launch, so the command an agent would hand over can drive the
 open TUI instead. It renders nothing and does not need a TTY, so it also runs
-in agent sessions. It never switches the TUI's context.`,
+in agent sessions. It never switches the TUI's context.
+
+Output: "opened <page>" and, with --save, "saved preset <name>"; exit 0.
+On error the reason goes to stderr and the exit code is 1; if a filter was
+dropped (e.g. an unsafe field) the page still opens, unsaved. If it reports
+that no dtui is listening, ask the user to run dtui --listen, or hand them
+the same command as dtui <view> ... to run themselves.`,
 	Example: `  # In the user's terminal
   dtui --listen
 
   # From the agent's shell
   dtui send logs --facet loglevel=ERROR --search timeout --timeframe 2h
   dtui send query 'fetch spans | filter request.is_failed | limit 50'
-  dtui send trace 4bf92f3577b34da6a3ce929d0e0e4736`,
+  dtui send trace 4bf92f3577b34da6a3ce929d0e0e4736
+
+  # Open and save as a personal preset, as W would (:preset lists it at once)
+  dtui send logs --facet loglevel=ERROR --search timeout --save timeout-errors`,
 	Args:              cobra.MaximumNArgs(2),
 	ValidArgsFunction: viewCompletion,
 	SilenceUsage:      true,

@@ -252,14 +252,27 @@ Press `?` inside the TUI for the full key reference, `:` to browse views, and
 environment): it is interactive only. An agent that has investigated something
 with dtctl can still hand you the evidence: the launch flags above are a stable
 contract for a command you paste and run yourself
-([ADR-0018](docs/adr/0018-launch-flags-are-a-handoff-contract.md)). Or start
-`dtui --listen` and let the agent run `dtui send` with the same arguments:
-each page opens in your TUI on top of what you were reading, never on another
-context, and `--save NAME` (or `dtui save-preset`) saves it as if you pressed `W` ([ADR-0019](docs/adr/0019-agents-may-navigate-a-listening-tui.md)). It keeps its own UI state (navigation
+([ADR-0018](docs/adr/0018-launch-flags-are-a-handoff-contract.md)). Or let the agent drive your TUI directly (below). It keeps its own UI state (navigation
 history) under `~/.local/state/dtui/`.
 
 Contexts and credentials are managed with dtctl; a `--context` flag or
 `DTCTL_CONTEXT` applies to the running session only.
+
+## Let an agent drive dtui
+
+An agent can't run the TUI, but it can drive one you started:
+
+1. In your terminal, run `dtui --listen`.
+2. The agent runs `dtui send` with the same arguments as a launch, for
+   example `dtui send logs --facet loglevel=ERROR --search timeout`. The page
+   opens on top of what you were reading; `esc` returns.
+3. `--save NAME` on `send`, or `dtui save-preset NAME VIEW --facet …`,
+   saves the narrowing as a personal preset, as if you pressed `W`.
+
+`send` prints what it opened or saved and exits 1 with the reason on
+failure, including when no dtui is listening. It never switches your context
+and never writes to the tenant. `--session NAME` runs several listening TUIs
+side by side. See [ADR-0019](docs/adr/0019-agents-may-navigate-a-listening-tui.md).
 
 ## Workspace file (`.dtui.yaml`)
 
