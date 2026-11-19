@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,6 +124,32 @@ func TestPresetPickerShowsViewAndOpens(t *testing.T) {
 	tv := a.top().(*tableView)
 	if tv.spec.Name != "pods" || len(tv.facets) != 1 || tv.facets[0].Value != "checkout" {
 		t.Errorf("enter opened view=%s facets=%+v", tv.spec.Name, tv.facets)
+	}
+}
+
+func TestPresetPickerNumbersRowsAndDigitsOpenThem(t *testing.T) {
+	a := testApp(t, "home")
+	a.presets = map[string]NamedPreset{}
+	for i := range 11 {
+		name := fmt.Sprintf("p%02d", i+1)
+		a.presets[name] = NamedPreset{Name: name, View: "logs", Searches: []string{name}}
+	}
+	deliver(a, a.applyNamedPreset(""))
+	body := overlayAs[*presetPicker](t, a).View(120, 40)
+	for _, want := range []string{"1 · p01", "2 · p02", "9 · p09"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("picker missing %q (every row 1-9 is numbered, not only the selected one):\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "10 · p10") {
+		t.Errorf("row 10 is numbered, but no key opens it:\n%s", body)
+	}
+	press(a, key("3"))
+	if a.overlay != nil {
+		t.Fatalf("overlay still open: %T", a.overlay)
+	}
+	if tv := a.top().(*tableView); len(tv.searches) != 1 || tv.searches[0] != "p03" {
+		t.Errorf("3 opened searches=%v, want p03", tv.searches)
 	}
 }
 
