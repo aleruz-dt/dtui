@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dynatrace-oss/dtui/internal/tui"
+	"github.com/dynatrace-oss/dtui/internal/workspace"
 )
 
 // Remote navigation (ADR-0019): `dtui --listen` serves a Unix socket that
@@ -66,12 +67,23 @@ the same command as dtui <view> ... to run themselves.`,
 		if len(args) == 2 {
 			arg = args[1]
 		}
-		catalogWS, warnings := loadPresetCatalog()
-		writeLoadWarnings(cmd.ErrOrStderr(), warnings)
+		var catalogWS *workspace.Workspace
+		if sendLaunch.preset != "" {
+			ctx, err := presetContext()
+			if err != nil {
+				return err
+			}
+			var warnings []string
+			catalogWS, warnings = loadPresetCatalog(ctx)
+			writeLoadWarnings(cmd.ErrOrStderr(), warnings)
+		}
 		nav, err := resolveLaunch(view, arg, catalogWS, sendLaunch)
 		if err != nil {
 			return err
 		}
+		// An explicit --context must match the listening TUI's (it never
+		// switches); without one the page opens on the user's context.
+		nav.Context = contextOverride()
 		path, err := socketPath(remoteSession)
 		if err != nil {
 			return err
@@ -104,7 +116,7 @@ func reportRemote(w io.Writer, r remoteReply) error {
 		fmt.Fprintf(w, "opened %s\n", r.Page)
 	}
 	if r.Saved != "" {
-		fmt.Fprintf(w, "saved preset %s — dtui --preset %s\n", r.Saved, r.Saved)
+		fmt.Fprintf(w, "saved preset %s (context %s) — dtui --preset %s\n", r.Saved, r.Context, r.Saved)
 	}
 	if r.Error != "" {
 		return errors.New(r.Error)

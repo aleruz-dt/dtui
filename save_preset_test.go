@@ -2,12 +2,11 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/adrg/xdg"
 
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/workspace"
@@ -29,10 +28,7 @@ func runSavePreset(t *testing.T, args ...string) (string, error) {
 
 func isolatePresetState(t *testing.T) {
 	t.Helper()
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	xdg.Reload()
-	t.Cleanup(xdg.Reload)
-	t.Chdir(t.TempDir())
+	twoContexts(t)
 	prev := remoteSession
 	remoteSession = "test-" + strconv.Itoa(os.Getpid())
 	t.Cleanup(func() { remoteSession = prev })
@@ -44,7 +40,7 @@ func TestSavePresetWritesWhatLaunchReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save-preset: %v\n%s", err, out)
 	}
-	w, err := workspace.Load(personalPresetsPath())
+	w, err := workspace.Load(personalPresetsPath("alpha"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +62,7 @@ func TestSavePresetReplacesLikeW(t *testing.T) {
 	if _, err := runSavePreset(t, "errs", "logs", "--facet", "loglevel=WARN"); err != nil {
 		t.Fatal(err)
 	}
-	w, _ := workspace.Load(personalPresetsPath())
+	w, _ := workspace.Load(personalPresetsPath("alpha"))
 	if p, _ := w.LookupPreset("errs"); p.Facets[0].Value != "WARN" {
 		t.Errorf("value = %q, want the second save to replace the first", p.Facets[0].Value)
 	}
@@ -104,10 +100,49 @@ func TestSavePresetGoesThroughAListeningTUI(t *testing.T) {
 	if err != nil || !strings.Contains(out, "saved preset errs") {
 		t.Fatalf("out = %q, err = %v", out, err)
 	}
-	if req := <-got; req.Open || req.SaveAs != "errs" || req.Page.Target != "logs" {
-		t.Errorf("request = %+v, want a save-only request for logs", req)
+	if req := <-got; req.Open || req.SaveAs != "errs" || req.Page.Target != "logs" || req.Page.Context != "" {
+		t.Errorf("request = %+v, want a save-only request for logs on the TUI's own context", req)
 	}
-	if _, err := os.Stat(personalPresetsPath()); err == nil {
+	if _, err := os.Stat(personalPresetsPath("alpha")); err == nil {
 		t.Error("save-preset wrote the file itself; the listening TUI owns the save")
+	}
+}
+
+func TestSavePresetForwardsAnExplicitContext(t *testing.T) {
+	isolatePresetState(t)
+	path, err := socketPath(remoteSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan tui.RemoteRequest, 1)
+	serveFake(t, path, func(req tui.RemoteRequest) (tui.RemoteResult, error) {
+		got <- req
+		return tui.RemoteResult{}, errors.New("refused")
+	})
+	contextName = "beta"
+	t.Cleanup(func() { contextName = "" })
+	if _, err := runSavePreset(t, "errs", "logs", "--facet", "loglevel=ERROR"); err == nil {
+		t.Fatal("want the TUI's refusal passed back")
+	}
+	if req := <-got; req.Page.Context != "beta" {
+		t.Errorf("request context = %q, want beta so a TUI on another context refuses", req.Page.Context)
+	}
+}
+
+func TestSavePresetWithoutListenerUsesTheActiveContext(t *testing.T) {
+	isolatePresetState(t)
+	contextName = "beta"
+	t.Cleanup(func() { contextName = "" })
+	out, err := runSavePreset(t, "errs", "logs", "--facet", "loglevel=ERROR")
+	if err != nil || !strings.Contains(out, "context beta") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	beta, _ := loadPersonalPresets("beta")
+	alpha, _ := loadPersonalPresets("alpha")
+	if _, ok := beta.LookupPreset("errs"); !ok {
+		t.Error("preset not saved under beta")
+	}
+	if _, ok := alpha.LookupPreset("errs"); ok {
+		t.Error("preset leaked into alpha")
 	}
 }

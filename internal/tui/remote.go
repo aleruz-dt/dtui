@@ -24,6 +24,8 @@ type RemoteRequest struct {
 type RemoteResult struct {
 	Page  string `json:"page,omitempty"`
 	Saved string `json:"saved,omitempty"`
+	// Context is the TUI's context: personal presets are saved under it.
+	Context string `json:"context,omitempty"`
 }
 
 // Remote hands a request to the running TUI and waits for the outcome.
@@ -65,7 +67,7 @@ func remoteHandler(p *tea.Program) Remote {
 // would on that page, and is refused if any of the page's narrowing was
 // dropped, so a preset never silently loses a filter.
 func (a *app) handleRemote(msg remoteMsg) tea.Cmd {
-	var res RemoteResult
+	res := RemoteResult{Context: a.opts.ContextName}
 	respond := func(err error) {
 		if msg.reply != nil {
 			msg.reply <- remoteReply{res: res, err: err}
@@ -80,13 +82,15 @@ func (a *app) handleRemote(msg remoteMsg) tea.Cmd {
 		return fail(errors.New("request neither opens a page nor saves a preset"))
 	}
 
+	// Opening never switches context, and a save lands in this context's
+	// presets, so a request naming another context is refused either way.
+	if c := strings.TrimSpace(req.Page.Context); c != "" && c != a.opts.ContextName {
+		return fail(fmt.Errorf("this dtui is on context %q, not %q; it will not switch", a.opts.ContextName, c))
+	}
 	var view viewModel
 	var warns []string
 	var cmd tea.Cmd
 	if req.Open {
-		if c := strings.TrimSpace(req.Page.Context); c != "" && c != a.opts.ContextName {
-			return fail(fmt.Errorf("this dtui is on context %q; it will not switch to %q", a.opts.ContextName, c))
-		}
 		prevTF := a.tf
 		v, w, err := a.launchView(req.Page)
 		if err != nil {

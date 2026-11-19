@@ -31,7 +31,9 @@ otherwise.
 - Pages are *pushed*, so `esc` returns to what the user was reading, and the
   status line says an agent opened them.
 - A remote request never switches context: the user chose the tenant this
-  TUI shows.
+  TUI shows. A save lands in that context's personal presets (ADR-0017), and
+  the reply names it. A request carrying an explicit `--context` that differs
+  from the TUI's is refused.
 - The socket is local (`$XDG_RUNTIME_DIR/dtui/<session>.sock`, mode
   `0600`), carries descriptors only (no tenant data, credentials or
   keystrokes) plus a preset name, and is served by the main package; `internal/tui` opens no

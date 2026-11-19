@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,11 +22,16 @@ import (
 var listPresetsCmd = &cobra.Command{
 	Use:   "list-presets",
 	Short: "Print named facet presets and exit",
-	Long:  "Print presets from .dtui.yaml and ~/.local/state/dtui/presets.yaml. Does not need a TTY.",
+	Long:  "Print presets from .dtui.yaml and the active context's personal presets (~/.local/state/dtui/presets/<context>.yaml). Does not need a TTY.",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		project, personal, warnings := loadPresetFiles()
+		ctx, err := presetContext()
+		if err != nil {
+			return err
+		}
+		project, personal, warnings := loadPresetFiles(ctx)
 		writeLoadWarnings(cmd.ErrOrStderr(), warnings)
+		fmt.Fprintf(cmd.OutOrStdout(), "context: %s\n", catalog.SafeText(ctx))
 		writePresetList(cmd.OutOrStdout(), workspace.MergePresetCatalog(project, personal), personal)
 		return nil
 	},
@@ -34,23 +40,27 @@ var listPresetsCmd = &cobra.Command{
 var deletePresetCmd = &cobra.Command{
 	Use:               "delete-preset NAME",
 	Short:             "Delete a personal named facet preset and exit",
-	Long:              "Removes NAME from ~/.local/state/dtui/presets.yaml. Workspace presets in .dtui.yaml are not edited. Does not need a TTY.",
+	Long:              "Removes NAME from the active context's personal presets (~/.local/state/dtui/presets/<context>.yaml). Workspace presets in .dtui.yaml are not edited. Does not need a TTY.",
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: personalPresetCompletion,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		project, personal, warnings := loadPresetFiles()
+		ctx, err := presetContext()
+		if err != nil {
+			return err
+		}
+		project, personal, warnings := loadPresetFiles(ctx)
 		writeLoadWarnings(cmd.ErrOrStderr(), warnings)
 		if _, ok := personal.LookupPreset(name); !ok {
 			if _, inWS := project.LookupPreset(name); inWS {
-				return fmt.Errorf("preset %q is in .dtui.yaml — edit that file (personal file has no %q)", name, name)
+				return fmt.Errorf("preset %q is in .dtui.yaml — edit that file (context %s has no personal %q)", name, ctx, name)
 			}
-			return fmt.Errorf("unknown personal preset %q", name)
+			return fmt.Errorf("unknown personal preset %q in context %s", name, ctx)
 		}
-		if err := workspace.DeletePreset(personalPresetsPath(), name); err != nil {
+		if err := workspace.DeletePreset(personalPresetsPath(ctx), name); err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "deleted preset %s\n", name)
+		fmt.Fprintf(cmd.OutOrStdout(), "deleted preset %s (context %s)\n", name, ctx)
 		return nil
 	},
 }
@@ -60,12 +70,14 @@ var saveLaunch launchFlags
 var savePresetCmd = &cobra.Command{
 	Use:   "save-preset NAME VIEW",
 	Short: "Save a personal named facet preset and exit",
-	Long: `Saves VIEW narrowed by --facet and --search as the personal preset NAME,
-exactly as W would on that page: no timeframe is pinned, and an existing
-personal preset of the same name is replaced. When a dtui --listen is
-running (see --session) the save goes through it, so its :preset list has
-the new preset at once; otherwise ~/.local/state/dtui/presets.yaml is
-written directly. .dtui.yaml is never edited. Does not need a TTY.`,
+	Long: `Saves VIEW narrowed by --facet and --search as the personal preset NAME
+of the active context, exactly as W would on that page: no timeframe is
+pinned, and an existing personal preset of the same name is replaced. When a
+dtui --listen is running (see --session) the save goes through it, so its
+:preset list has the new preset at once; it saves to that TUI's context and
+refuses if --context names another. Otherwise
+~/.local/state/dtui/presets/<context>.yaml is written directly. .dtui.yaml
+is never edited. Does not need a TTY.`,
 	Example: `  dtui save-preset payments-errors logs --facet loglevel=ERROR --search payment
   dtui logs --preset payments-errors`,
 	Args:              cobra.ExactArgs(2),
@@ -87,6 +99,9 @@ written directly. .dtui.yaml is never edited. Does not need a TTY.`,
 		if err != nil {
 			return err
 		}
+		// An explicit --context must match the listening TUI's; otherwise the
+		// save follows whatever context the user is looking at.
+		nav.Context = contextOverride()
 		reply, err := sendRemote(path, tui.RemoteRequest{Page: nav, SaveAs: name})
 		if !errors.Is(err, errNoListener) {
 			if err != nil {
@@ -94,12 +109,16 @@ written directly. .dtui.yaml is never edited. Does not need a TTY.`,
 			}
 			return reportRemote(cmd.OutOrStdout(), reply)
 		}
-		p := tui.NamedPreset{Name: name, View: canonicalViewName(nav.Target),
-			Facets: catalogFacetsFromNav(nav.Facets), Searches: nav.Searches, Personal: true}
-		if err := savePersonalPreset(personalPresetsPath())(p); err != nil {
+		ctx, err := presetContext()
+		if err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "saved preset %s — dtui --preset %s\n", name, name)
+		p := tui.NamedPreset{Name: name, View: canonicalViewName(nav.Target),
+			Facets: catalogFacetsFromNav(nav.Facets), Searches: nav.Searches, Personal: true}
+		if err := savePersonalPreset(personalPresetsPath(ctx))(p); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "saved preset %s (context %s) — dtui --preset %s\n", name, ctx, name)
 		return nil
 	},
 }
@@ -120,17 +139,33 @@ func savePresetCompletion(cmd *cobra.Command, args []string, toComplete string) 
 	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
-func loadPresetFiles() (project, personal *workspace.Workspace, warnings []string) {
+// presetContext is the context a preset subcommand acts on: the same one a
+// launch would use (applyWorkspaceContext), so list, save and delete agree
+// with the TUI.
+func presetContext() (string, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", err
+	}
+	ws, _ := loadWorkspace()
+	applyWorkspaceContext(cfg, ws)
+	if cfg.CurrentContext == "" {
+		return "", fmt.Errorf("no current context — personal presets are per context; pick one with --context <name>")
+	}
+	return cfg.CurrentContext, nil
+}
+
+func loadPresetFiles(ctx string) (project, personal *workspace.Workspace, warnings []string) {
 	project, warnings = loadWorkspace()
-	personal, personalWarn := loadPersonalPresets()
+	personal, personalWarn := loadPersonalPresets(ctx)
 	if personalWarn != "" {
 		warnings = append(warnings, personalWarn)
 	}
 	return project, personal, warnings
 }
 
-func loadPresetCatalog() (*workspace.Workspace, []string) {
-	project, personal, warnings := loadPresetFiles()
+func loadPresetCatalog(ctx string) (*workspace.Workspace, []string) {
+	project, personal, warnings := loadPresetFiles(ctx)
 	return workspace.MergePresetCatalog(project, personal), warnings
 }
 
@@ -225,7 +260,7 @@ func resolveLaunch(view, arg string, ws *workspace.Workspace, f launchFlags) (tu
 
 func lookupLaunchPreset(ws *workspace.Workspace, name string) (workspace.Preset, error) {
 	if ws == nil || len(ws.Presets) == 0 {
-		return workspace.Preset{}, fmt.Errorf("preset %q: no presets in .dtui.yaml or ~/.local/state/dtui/presets.yaml", name)
+		return workspace.Preset{}, fmt.Errorf("preset %q: no presets in .dtui.yaml or this context's personal presets", name)
 	}
 	p, ok := ws.LookupPreset(name)
 	if !ok {
@@ -578,12 +613,25 @@ func deletePersonalPreset(path string) func(name string) error {
 	}
 }
 
-func personalPresetsPath() string {
-	return filepath.Join(xdg.StateHome, "dtui", "presets.yaml")
+// personalPresetsPath is the personal preset file of one dtctl context:
+// presets carry tenant-specific values (namespaces, hosts), so each context
+// keeps its own, as navigation history does.
+func personalPresetsPath(ctx string) string {
+	return filepath.Join(xdg.StateHome, "dtui", "presets", presetFileName(ctx))
 }
 
-func loadPersonalPresets() (*workspace.Workspace, string) {
-	path := personalPresetsPath()
+// presetFileName escapes a context name into one safe path element: no
+// separators, and no leading dot (so "." or ".." cannot walk the tree).
+func presetFileName(ctx string) string {
+	name := url.PathEscape(ctx)
+	if strings.HasPrefix(name, ".") {
+		name = "%2E" + name[1:]
+	}
+	return name + ".yaml"
+}
+
+func loadPersonalPresets(ctx string) (*workspace.Workspace, string) {
+	path := personalPresetsPath(ctx)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil, ""
