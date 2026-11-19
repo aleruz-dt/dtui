@@ -288,6 +288,7 @@ func TestResolveLaunchHandoffFlags(t *testing.T) {
 		"search on API view":        {"slos", "", launchFlags{searches: []string{"x"}}},
 		"search on a trace id":      {"trace", "4bf92f3577b34da6a3ce929d0e0e4736", launchFlags{searches: []string{"x"}}},
 		"unknown lens":              {"traces", "", launchFlags{lens: "nope"}},
+		"lens on a trace id":        {"trace", "4bf92f3577b34da6a3ce929d0e0e4736", launchFlags{lens: "genai"}},
 		"lens on a bespoke view":    {"home", "", launchFlags{lens: "genai"}},
 		"lens without a view":       {"", "", launchFlags{lens: "genai"}},
 		"bad timeframe":             {"logs", "", launchFlags{timeframe: "yesterday"}},

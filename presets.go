@@ -173,6 +173,9 @@ func resolveLaunch(view, arg string, ws *workspace.Workspace, f launchFlags) (tu
 		}
 	}
 	if f.lens != "" {
+		if msg.Target == "trace" && msg.ID != "" {
+			return msg, fmt.Errorf("dtui trace <id> opens the trace waterfall; --lens does not apply")
+		}
 		if err := checkLens(msg.Target, f.lens); err != nil {
 			return msg, err
 		}

@@ -274,18 +274,18 @@ func newApp(opts Options) (*app, error) {
 // else resolves as a name. A lowercase token is ambiguous — "payments" is
 // type-shaped too — so its type browse carries the original term as a
 // fallback: zero instances re-shape it into the name search.
-func (a *app) navViewFor(arg string) viewModel {
+func (a *app) navViewFor(arg string, tf catalog.Timeframe) viewModel {
 	if entityIDRe.MatchString(arg) {
-		return newNavWalkView(a.ds, *entityFromID(arg), a.tf)
+		return newNavWalkView(a.ds, *entityFromID(arg), tf)
 	}
 	if typ := strings.ToUpper(arg); navTypeRe.MatchString(typ) {
-		v := newNavBrowserView(a.ds, typ, a.tf)
+		v := newNavBrowserView(a.ds, typ, tf)
 		if arg != typ {
 			v.searchFallback = arg
 		}
 		return v
 	}
-	return newNavSearchView(a.ds, arg, a.tf)
+	return newNavSearchView(a.ds, arg, tf)
 }
 
 // viewFor resolves a view name to a fresh view: the bespoke screens (home,
@@ -725,6 +725,7 @@ func (a *app) navigateExternal(msg NavigateMsg) tea.Cmd {
 		return a.switchContext(c)
 	}
 
+	prevTF := a.tf
 	view, warns, err := a.launchView(msg)
 	if err != nil {
 		return statusErr("navigate: " + err.Error())
@@ -732,55 +733,71 @@ func (a *app) navigateExternal(msg NavigateMsg) tea.Cmd {
 	if len(warns) > 0 {
 		warn = statusErr("navigate: " + strings.Join(warns, "; "))
 	}
-	return tea.Batch(warn, a.navigate(view, true))
+	// The covered stack becomes prev: it must query the window the header
+	// now advertises, so `-` does not return to a stale one.
+	var retime tea.Cmd
+	if a.tf != prevTF {
+		retime = a.setTimeframe(a.tf)
+	}
+	return tea.Batch(warn, retime, a.navigate(view, true))
 }
 
 // launchView builds the page a NavigateMsg names, with its narrowing in place
 // before Init composes the query. A requested window is adopted as the
-// session timeframe, so the header and later refreshes agree with it. warns
-// are non-fatal: the page still opens, minus what could not apply.
+// session timeframe only once the page resolves, so the header and later
+// refreshes agree with it and a rejected target leaves the session as it was.
+// warns are non-fatal: the page still opens, minus what could not apply.
 func (a *app) launchView(msg NavigateMsg) (viewModel, []string, error) {
 	var warns []string
+	tf := a.tf
 	switch {
 	case !msg.From.IsZero():
-		a.tf = catalog.AbsoluteTimeframe(msg.From, msg.To, time.Now())
+		tf = catalog.AbsoluteTimeframe(msg.From, msg.To, time.Now())
 	case msg.Timeframe != "":
 		if parsed, ok := catalog.ParseTimeframe(msg.Timeframe); ok {
-			a.tf = parsed
+			tf = parsed
 		} else {
-			warns = append(warns, fmt.Sprintf("bad timeframe %q — using %s", msg.Timeframe, a.tf.Label))
+			warns = append(warns, fmt.Sprintf("bad timeframe %q — using %s", msg.Timeframe, tf.Label))
 		}
 	}
-	tf := a.tf
+	view, err := a.launchPage(msg, tf, &warns)
+	if err != nil {
+		return nil, nil, err
+	}
+	a.tf = tf
+	return view, warns, nil
+}
+
+func (a *app) launchPage(msg NavigateMsg, tf catalog.Timeframe, warns *[]string) (viewModel, error) {
 	id := strings.TrimSpace(msg.ID)
 
 	switch msg.Target {
 	case "", "home":
-		return newHomeView(a.ds, tf), warns, nil
+		return newHomeView(a.ds, tf), nil
 	case "query", "dql":
 		v := newQueryView(a.ds, "", tf, a.qhist)
 		if dql := strings.TrimSpace(msg.DQL); dql != "" {
 			v.submitted(dql)
 		}
-		return v, warns, nil
+		return v, nil
 	case "nav", "smartscape", "navigator":
 		if id != "" {
-			return a.navViewFor(id), warns, nil
+			return a.navViewFor(id, tf), nil
 		}
-		return newNavView(a.ds, tf), warns, nil
+		return newNavView(a.ds, tf), nil
 	case "trace":
 		if id == "" && len(msg.Facets) > 0 {
 			id = strings.TrimSpace(msg.Facets[0].Value)
 		}
 		if id == "" {
-			return nil, nil, fmt.Errorf("trace target needs a trace id")
+			return nil, fmt.Errorf("trace target needs a trace id")
 		}
-		return newWaterfallView(a.ds, id, "", tf, time.Time{}), warns, nil
+		return newWaterfallView(a.ds, id, "", tf, time.Time{}), nil
 	}
 
 	spec := catalog.Lookup(msg.Target)
 	if spec == nil {
-		return nil, nil, fmt.Errorf("unknown view %q (available: home, query, nav, %s)", msg.Target, strings.Join(catalog.Names(), ", "))
+		return nil, fmt.Errorf("unknown view %q (available: home, query, nav, %s)", msg.Target, strings.Join(catalog.Names(), ", "))
 	}
 	facets := make([]catalog.Facet, 0, len(msg.Facets))
 	for _, f := range msg.Facets {
@@ -794,7 +811,7 @@ func (a *app) launchView(msg NavigateMsg) (viewModel, []string, error) {
 		// always %q-quoted literals, so drop the facet rather than emit unsafe DQL.
 		if !catalog.SafeFacetField(f.Field) ||
 			(f.MapField != "" && (!catalog.SafeFacetField(f.MapField) || !catalog.SafeFacetField(f.MapKey))) {
-			warns = append(warns, fmt.Sprintf("dropping facet with unsafe field %q", f.Field))
+			*warns = append(*warns, fmt.Sprintf("dropping facet with unsafe field %q", f.Field))
 			continue
 		}
 		facets = append(facets, catalog.Facet{Field: f.Field, Value: f.Value, Tokens: f.Tokens,
@@ -805,10 +822,10 @@ func (a *app) launchView(msg NavigateMsg) (viewModel, []string, error) {
 		if i := lensIndexByName(spec, msg.Lens); i >= 0 {
 			scope.Lens = i
 		} else {
-			warns = append(warns, fmt.Sprintf("%s has no %q lens", spec.Name, msg.Lens))
+			*warns = append(*warns, fmt.Sprintf("%s has no %q lens", spec.Name, msg.Lens))
 		}
 	}
-	return a.narrowedTable(spec, scope, strings.TrimSpace(msg.Filter), msg.Searches, facets), warns, nil
+	return a.narrowedTable(spec, scope, strings.TrimSpace(msg.Filter), msg.Searches, facets), nil
 }
 
 // narrowedTable builds a catalog table with its filter and server narrowing
@@ -948,7 +965,7 @@ func (a *app) openNav(arg string) tea.Cmd {
 	if arg == "" {
 		return a.jumpTo("nav", "")
 	}
-	return a.navigate(a.navViewFor(arg), true)
+	return a.navigate(a.navViewFor(arg, a.tf), true)
 }
 
 // applyFacetBelow routes an inspector's facet request to the nearest list
