@@ -107,6 +107,34 @@ func TestWritePresetListSanitizesValues(t *testing.T) {
 	}
 }
 
+func TestWritePresetListLabelsSource(t *testing.T) {
+	ws := &workspace.Workspace{Presets: map[string]workspace.Preset{
+		"payments-errors": {View: "logs", Searches: []string{"timeout"}},
+	}}
+	personal := &workspace.Workspace{Presets: map[string]workspace.Preset{
+		"checkout-pods": {View: "pods", Searches: []string{"checkout"}},
+	}}
+	var buf strings.Builder
+	writePresetList(&buf, workspace.MergePresetCatalog(ws, personal), personal)
+	for _, line := range strings.Split(buf.String(), "\n") {
+		switch {
+		case strings.HasPrefix(line, "checkout-pods") && !strings.Contains(line, "personal"):
+			t.Errorf("personal preset not labeled personal: %q", line)
+		case strings.HasPrefix(line, "payments-errors") && !strings.Contains(line, "workspace"):
+			t.Errorf("workspace preset not labeled workspace: %q", line)
+		}
+	}
+}
+
+func TestCanonicalViewNameKeepsUnknownNames(t *testing.T) {
+	if got := canonicalViewName("not-a-view"); got != "not-a-view" {
+		t.Errorf("canonicalViewName(not-a-view) = %q", got)
+	}
+	if got := canonicalViewName("logs"); got != "logs" {
+		t.Errorf("canonicalViewName(logs) = %q", got)
+	}
+}
+
 func TestListPresetsIsACommand(t *testing.T) {
 	need := map[string]bool{"list-presets": false, "delete-preset": false}
 	for _, c := range rootCmd.Commands() {
@@ -161,6 +189,20 @@ presets:
 	}
 	if _, err := resolveLaunchNarrowing("nav", nil, "", []string{"id=x"}); err == nil {
 		t.Fatal("nav --facet should error")
+	}
+	if _, err := resolveLaunchNarrowing("", nil, "", []string{"loglevel=ERROR"}); err == nil {
+		t.Fatal("--facet without a view should error")
+	}
+	if _, err := resolveLaunchNarrowing("not-a-view", nil, "", nil); err == nil {
+		t.Fatal("unknown view should error")
+	}
+	for _, view := range []string{"", "nav", "query"} {
+		if _, err := resolveLaunchNarrowing(view, nil, "", nil); err != nil {
+			t.Errorf("plain launch of %q: %v", view, err)
+		}
+	}
+	if n, err := resolveLaunchNarrowing("logs", nil, "", []string{"loglevel=ERROR"}); err != nil || len(n.facets) != 1 {
+		t.Errorf("logs --facet = %+v, %v", n, err)
 	}
 }
 

@@ -431,6 +431,17 @@ func TestLoadTooManyPresetFacets(t *testing.T) {
 	}
 }
 
+func TestLoadMaxPresetFacetsIsAllowed(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("presets:\n  payments-errors:\n    view: logs\n    facets:\n")
+	for i := 0; i < MaxFacetsPerPreset; i++ {
+		fmt.Fprintf(&b, "      - field: f%d\n        value: v\n", i)
+	}
+	if _, err := Load(writeFile(t, t.TempDir(), b.String())); err != nil {
+		t.Fatalf("exactly %d facets should load: %v", MaxFacetsPerPreset, err)
+	}
+}
+
 func TestSavePresetRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "presets.yaml")
 	p := Preset{

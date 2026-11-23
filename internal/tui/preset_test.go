@@ -59,6 +59,10 @@ func TestSavePresetFromFacetManager(t *testing.T) {
 		t.Errorf("file preset = %+v", p)
 	}
 
+	if tv.facetMode != facetOff {
+		t.Errorf("facet manager still open after W saved: mode %d", tv.facetMode)
+	}
+
 	tv.facets = nil
 	tv.searches = nil
 	deliver(a, a.applyNamedPreset("payments-errors"))
@@ -162,6 +166,91 @@ func TestSavePresetRefusesEntityScope(t *testing.T) {
 	press(a, key("W"))
 	if a.overlay != nil {
 		t.Fatalf("save overlay opened despite entity scope: %T", a.overlay)
+	}
+}
+
+func TestSavePresetRefusesEntityScopeNamesIDWhenUnnamed(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SavePreset = func(NamedPreset) error { return nil }
+	tv := a.top().(*tableView)
+	tv.facets = []catalog.Facet{{Field: "loglevel", Value: "ERROR"}}
+	tv.scope.Entity = &catalog.Entity{ID: "K8S_POD-0000000000000001", Type: "K8S_POD"}
+	press(a, key("W"))
+	if !strings.Contains(a.status, "K8S_POD-0000000000000001") {
+		t.Errorf("status %q does not name the unnamed entity by ID", a.status)
+	}
+}
+
+func TestSavePresetKeepsExistingPresets(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SavePreset = func(NamedPreset) error { return nil }
+	a.presets = map[string]NamedPreset{"checkout-pods": {Name: "checkout-pods", View: "pods", Searches: []string{"x"}}}
+	tv := a.top().(*tableView)
+	tv.facets = []catalog.Facet{{Field: "loglevel", Value: "ERROR"}}
+	press(a, key("W"))
+	typeText(a, "payments-errors")
+	press(a, key("enter"))
+	if _, ok := a.presets["checkout-pods"]; !ok {
+		t.Errorf("saving a preset dropped the existing ones: %v", a.presets)
+	}
+	if _, ok := a.presets["payments-errors"]; !ok {
+		t.Errorf("new preset missing: %v", a.presets)
+	}
+}
+
+func TestPresetNarrowingShowsTimeframe(t *testing.T) {
+	p := NamedPreset{Timeframe: "2h", Searches: []string{"timeout"}}
+	if got := p.narrowing(); !strings.Contains(got, "2h") || !strings.Contains(got, "timeout") {
+		t.Errorf("narrowing = %q, want timeframe and search", got)
+	}
+	if got := (NamedPreset{}).narrowing(); got != "—" {
+		t.Errorf("empty narrowing = %q, want —", got)
+	}
+}
+
+func TestApplyPresetTimeframeOverridesSession(t *testing.T) {
+	a := testApp(t, "home")
+	a.presets = map[string]NamedPreset{
+		"payments-errors": {Name: "payments-errors", View: "logs", Timeframe: "6h", Searches: []string{"timeout"}},
+	}
+	deliver(a, a.applyNamedPreset("payments-errors"))
+	if a.tf.Label != "6h" {
+		t.Errorf("session timeframe = %q, want the preset's 6h", a.tf.Label)
+	}
+	if tv := a.top().(*tableView); tv.scope.Timeframe.Label != "6h" {
+		t.Errorf("view timeframe = %q, want 6h", tv.scope.Timeframe.Label)
+	}
+}
+
+func TestPresetPickerIgnoresOutOfRangeSelection(t *testing.T) {
+	for _, k := range []string{"enter", "d"} {
+		a := testApp(t, "home")
+		a.presets = map[string]NamedPreset{"only": {Name: "only", View: "logs", Personal: true}}
+		a.opts.DeletePreset = func(name string) error {
+			t.Errorf("%s deleted %q from a selection past the last row", k, name)
+			return nil
+		}
+		a.overlay = &presetPicker{app: a, sel: 1}
+		press(a, key(k))
+		if _, ok := a.top().(*tableView); ok {
+			t.Errorf("%s opened a preset from a selection past the last row", k)
+		}
+	}
+}
+
+func TestPresetPickerClampsSelectionAfterDeletingLastRow(t *testing.T) {
+	a := testApp(t, "home")
+	a.opts.DeletePreset = func(string) error { return nil }
+	a.presets = map[string]NamedPreset{}
+	for _, name := range []string{"a-one", "b-two", "c-three"} {
+		a.presets[name] = NamedPreset{Name: name, View: "logs", Searches: []string{name}, Personal: true}
+	}
+	deliver(a, a.applyNamedPreset(""))
+	p := overlayAs[*presetPicker](t, a)
+	p.sel = 2
+	press(a, key("d"))
+	if p.sel != 1 {
+		t.Errorf("sel = %d after deleting the last of 3 rows, want 1", p.sel)
 	}
 }
 

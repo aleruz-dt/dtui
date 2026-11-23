@@ -101,6 +101,27 @@ func TestPresetCommandsFollowTheActiveContext(t *testing.T) {
 	}
 }
 
+func TestBrokenPersonalPresetsWarn(t *testing.T) {
+	twoContexts(t)
+	path := personalPresetsPath("alpha")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("presets: [not, a, map\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, personal, warnings := loadPresetFiles("alpha")
+	if personal != nil {
+		t.Errorf("broken file loaded: %+v", personal)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "personal presets ignored") {
+		t.Errorf("warnings = %q, want one personal-presets warning", warnings)
+	}
+	if _, _, warnings := loadPresetFiles("beta"); len(warnings) != 0 {
+		t.Errorf("missing personal file warned: %q", warnings)
+	}
+}
+
 func TestPresetFileNameStaysOneSafeElement(t *testing.T) {
 	for _, ctx := range []string{"prod", "a/b", "..", ".", `a\b`, "prod eu"} {
 		name := presetFileName(ctx)
