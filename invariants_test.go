@@ -209,7 +209,8 @@ func TestLintVersionMatchesCI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return string(data)
+		// Windows checkouts may use CRLF; the YAML pin regex is newline-sensitive.
+		return strings.ReplaceAll(string(data), "\r\n", "\n")
 	}
 	makeVer := regexp.MustCompile(`golangci-lint/v2/cmd/golangci-lint@(v[0-9.]+)`).FindStringSubmatch(read("makefile"))
 	ciVer := regexp.MustCompile(`golangci-lint-action@\S+.*\n\s+with:\n\s+version: (v[0-9.]+)`).FindStringSubmatch(read(".github/workflows/ci.yml"))
