@@ -131,7 +131,7 @@ credential store. Details in [docs/design/tui.md](docs/design/tui.md) and the
 | Key | Does |
 |---|---|
 | `:` | Command bar: jump to any view (`:pods`, `:svc`, `:logs error`, `:trace <id>`, `:query <dql>`, `:ctx prod`) |
-| `/` | Quick search in the current view |
+| `/` | Quick search in the current view (enter: server search; jumps restore that view's last filter) |
 | `enter` | Open the detail page |
 | `l` `s` `m` `p` `v` `u` | Logs, traces, metrics, problems, events, SLOs, pre-scoped to the selection |
 | `x` | Related entities (topology hop) |

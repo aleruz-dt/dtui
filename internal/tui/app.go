@@ -205,6 +205,10 @@ type app struct {
 	qhist            *queryHistory
 	presets          map[string]NamedPreset
 	workspacePresets map[string]NamedPreset
+	// lastFilter is this session's latest server-side narrowing per catalog
+	// view (facets + searches). Hotkey and command-bar jumps restore it;
+	// named presets are never auto-applied. Dropped on :ctx.
+	lastFilter map[string]viewFilter
 
 	status    string
 	statusErr bool
@@ -281,6 +285,7 @@ func newApp(opts Options) (*app, error) {
 		a.opts.StartupNoticeErr = true
 	}
 	a.stack = []viewModel{initial}
+	a.rememberLastFilter(false)
 	return a, nil
 }
 
@@ -526,6 +531,7 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 
 	case historyMarkMsg:
 		a.recordHistory()
+		a.rememberLastFilter(true)
 		return nil
 
 	case applyFacetMsg:
@@ -584,6 +590,7 @@ func (a *app) navigate(view viewModel, replace bool) tea.Cmd {
 		a.stack = append(append([]viewModel{}, a.stack...), view)
 	}
 	a.recordHistory()
+	a.rememberLastFilter(false)
 	return tea.Batch(
 		view.Update(bodySizeMsg{width: a.width, height: a.bodyHeight()}),
 		view.Init(),
@@ -887,8 +894,12 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	if err != nil {
 		return statusErr(err.Error())
 	}
-	if tv, ok := view.(*tableView); ok && filter != "" {
-		tv.setFilter(filter)
+	if tv, ok := view.(*tableView); ok {
+		if filter != "" {
+			tv.setFilter(filter)
+		} else {
+			a.applyLastFilter(tv)
+		}
 	}
 	nav := a.navigate(view, true)
 	// The view was built unscoped when the pin didn't apply — say so, so the
@@ -968,6 +979,7 @@ func (a *app) handleCtxSwitched(msg ctxSwitchedMsg) tea.Cmd {
 	a.hist.ctx = w.ContextName // H now records and lists the new context
 	a.opts.SavePreset, a.opts.DeletePreset = w.SavePreset, w.DeletePreset
 	a.presets = map[string]NamedPreset{}
+	a.lastFilter = nil
 	for _, p := range w.Presets {
 		if p.Name != "" {
 			a.presets[p.Name] = p
