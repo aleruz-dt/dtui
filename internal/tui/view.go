@@ -87,6 +87,10 @@ type NavigateMsg struct {
 	// open-ended (runs to now).
 	From time.Time `json:"from,omitzero"`
 	To   time.Time `json:"to,omitzero"`
+	// FromPreset is set when this page was opened by `dtui --preset`. It is
+	// not JSON: the socket never sends it. Last-filter skips recording so a
+	// named preset does not become the next bare jump (ADR-0020).
+	FromPreset bool `json:"-"`
 	// Context optionally names the environment/context the deep link targets.
 	// It is a resolved context name (the wasm host maps a portable tenant URL
 	// to the local context via host match before sending this). When set and

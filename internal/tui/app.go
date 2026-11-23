@@ -285,7 +285,9 @@ func newApp(opts Options) (*app, error) {
 		a.opts.StartupNoticeErr = true
 	}
 	a.stack = []viewModel{initial}
-	a.rememberLastFilter(false)
+	if !opts.Launch.FromPreset {
+		a.rememberLastFilter(false)
+	}
 	return a, nil
 }
 
@@ -902,20 +904,31 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 		}
 	}
 	nav := a.navigate(view, true)
+	var notes []string
+	isErr := false
 	// The view was built unscoped when the pin didn't apply — say so, so the
 	// user isn't left reading an unfiltered list wondering why.
 	if a.pinRejected(name) {
-		return tea.Batch(nav, statusErr(fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type)))
+		notes = append(notes, fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type))
+		isErr = true
 	}
 	// Same honesty for segments: API-backed views bypass query:execute, so
 	// the global scope doesn't reach them (the header pill dims too).
 	if a.segmentsRejected(name) {
-		return tea.Batch(nav, statusErr(fmt.Sprintf("%s is API-backed — segments don't apply", name)))
+		notes = append(notes, fmt.Sprintf("%s is API-backed — segments don't apply", name))
+		isErr = true
 	}
 	if restored != "" {
-		return tea.Batch(nav, status(restored))
+		notes = append(notes, restored)
 	}
-	return nav
+	if len(notes) == 0 {
+		return nav
+	}
+	msg := strings.Join(notes, " · ")
+	if isErr {
+		return tea.Batch(nav, statusErr(msg))
+	}
+	return tea.Batch(nav, status(msg))
 }
 
 // openNav routes a command-bar navigator jump: no argument opens the

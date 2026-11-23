@@ -21,10 +21,12 @@ session only:
 - The payload is what `presetDraft` would save (facets + searches, no
   timeframe, no entity). API-backed and entity-scoped tables are skipped.
 - It is written when the user changes server-side narrowing (`historyMarkMsg`)
-  and when launch opens an unscoped table that way. `:preset`, `H`, and
-  `dtui send` do not write the slot.
+  and when launch opens an unscoped table via `--facet` / `--search`.
+  `:preset`, `dtui --preset`, `H`, and `dtui send` do not write the slot —
+  named presets stay never auto-applied, including the CLI form.
 - A bare hotkey or `:logs` jump restores it and **says so** in the status
-  line. An argument (`:logs foo`, `--preset`, `--facet`, `dtui send`) wins.
+  line (combined with a rejected pin or segments, when those also apply).
+  An argument (`:logs foo`, `--preset`, `--facet`, `dtui send`) wins.
 - `F` and the esc-chain that clears facets forget it. `:ctx` drops the map.
 
 Zero configuration: no last filter still launches as today. Named presets

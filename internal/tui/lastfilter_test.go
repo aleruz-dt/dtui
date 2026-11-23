@@ -194,3 +194,45 @@ func TestAPIViewDoesNotRecordOrRestoreLastFilter(t *testing.T) {
 		t.Fatalf("jump to slos must not apply last filter, got %v", got.searches)
 	}
 }
+
+func TestPresetLaunchDoesNotWriteLastFilter(t *testing.T) {
+	a, err := newApp(Options{
+		ContextName: "test",
+		SafetyLevel: "readonly",
+		Launch:      NavigateMsg{Target: "logs", Searches: []string{"timeout"}, FromPreset: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.ds.runFn = func(string) ([]map[string]any, error) { return nil, nil }
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if _, ok := a.lastFilter["logs"]; ok {
+		t.Fatal("dtui --preset must not seed last filter")
+	}
+	press(a, key("6"))
+	press(a, key("5"))
+	tv := a.top().(*tableView)
+	if len(tv.searches) != 0 {
+		t.Fatalf("jump after --preset launch must stay unfiltered, got %v", tv.searches)
+	}
+}
+
+func TestRejectedPinStillAnnouncesRestoredFilter(t *testing.T) {
+	a := testApp(t, "pods")
+	seedRows(t, a, []map[string]any{podRow("checkout-1", "shop", "Running", 0)})
+	addServerSearch(a, "timeout")
+	deliver(a, a.jumpTo("processes", ""))
+	seedRows(t, a, []map[string]any{{"id": "PROCESS-1", "name": "engine", "type": "PROCESS"}})
+	press(a, key("."))
+	press(a, key("4"))
+	tv := a.top().(*tableView)
+	if tv.spec.Name != "pods" || tv.scope.Entity != nil {
+		t.Fatalf("want unscoped pods, got %v scope %+v", tv.Crumb(), tv.scope.Entity)
+	}
+	if len(tv.searches) != 1 || tv.searches[0] != "timeout" {
+		t.Fatalf("last filter should still apply, got %v", tv.searches)
+	}
+	if !a.statusErr || !strings.Contains(a.status, "showing all") || !strings.Contains(a.status, "timeout") {
+		t.Errorf("pin reject must not hide the restore, status = %q", a.status)
+	}
+}

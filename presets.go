@@ -211,6 +211,7 @@ func resolveLaunch(view, arg string, ws *workspace.Workspace, f launchFlags) (tu
 		msg.Timeframe = p.Timeframe
 		facets = catalogFacets(p.Facets)
 		msg.Searches = append([]string{}, p.Searches...)
+		msg.FromPreset = true
 	}
 
 	extra, err := parseFacetFlags(f.facets)

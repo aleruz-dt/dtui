@@ -167,7 +167,7 @@ presets:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Target != "logs" || len(p.Facets) != 1 || p.Facets[0].Value != "ERROR" {
+	if p.Target != "logs" || len(p.Facets) != 1 || p.Facets[0].Value != "ERROR" || !p.FromPreset {
 		t.Errorf("preset launch = %+v", p)
 	}
 	p, err = resolveLaunch("logs", "", ws, launchFlags{preset: "payments-errors", facets: []string{"loglevel=WARN", "k8s.namespace.name=payments"}})
