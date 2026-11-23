@@ -86,6 +86,7 @@ func TestSavePresetRejectsWhatAPresetCannotHold(t *testing.T) {
 }
 
 func TestSavePresetGoesThroughAListeningTUI(t *testing.T) {
+	skipWithoutSockets(t)
 	isolatePresetState(t)
 	path, err := socketPath(remoteSession)
 	if err != nil {
@@ -109,6 +110,7 @@ func TestSavePresetGoesThroughAListeningTUI(t *testing.T) {
 }
 
 func TestSavePresetForwardsAnExplicitContext(t *testing.T) {
+	skipWithoutSockets(t)
 	isolatePresetState(t)
 	path, err := socketPath(remoteSession)
 	if err != nil {

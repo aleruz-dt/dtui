@@ -7,6 +7,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
 
 // RemoteRequest is one request to a listening TUI (ADR-0019): open Page on
@@ -32,15 +34,22 @@ type RemoteResult struct {
 // Options.Listen receives one; the main package serves it on a local socket.
 type Remote func(RemoteRequest) (RemoteResult, error)
 
-// remoteReplyTimeout bounds how long a remote caller waits for the app to
-// take the message — a TUI blocked behind a modal must not hang the agent.
+// remoteReplyTimeout bounds how long a remote caller waits for Update to
+// take the message: it only fires before the program runs or while Update
+// is stalled, since overlays do not hold remote messages back.
 const remoteReplyTimeout = 10 * time.Second
 
+// remoteReplyGrace lets a request Update took just before its deadline
+// still answer, so the caller never reports a timeout for a page that opened.
+const remoteReplyGrace = time.Second
+
 // remoteMsg carries a RemoteRequest into Update. reply is buffered, so
-// answering never blocks Update.
+// answering never blocks Update. A request still queued at deadline is
+// dropped, not applied, because its caller has already been told it failed.
 type remoteMsg struct {
-	req   RemoteRequest
-	reply chan remoteReply
+	req      RemoteRequest
+	reply    chan remoteReply
+	deadline time.Time
 }
 
 type remoteReply struct {
@@ -48,15 +57,17 @@ type remoteReply struct {
 	err error
 }
 
+var errRemoteTimeout = errors.New("dtui did not answer in time; nothing was opened or saved")
+
 func remoteHandler(p *tea.Program) Remote {
 	return func(req RemoteRequest) (RemoteResult, error) {
 		reply := make(chan remoteReply, 1)
-		go p.Send(remoteMsg{req: req, reply: reply})
+		go p.Send(remoteMsg{req: req, reply: reply, deadline: time.Now().Add(remoteReplyTimeout)})
 		select {
 		case r := <-reply:
 			return r.res, r.err
-		case <-time.After(remoteReplyTimeout):
-			return RemoteResult{}, errors.New("dtui did not answer in time")
+		case <-time.After(remoteReplyTimeout + remoteReplyGrace):
+			return RemoteResult{}, errRemoteTimeout
 		}
 	}
 }
@@ -77,6 +88,9 @@ func (a *app) handleRemote(msg remoteMsg) tea.Cmd {
 		respond(err)
 		return statusErr("agent: " + err.Error())
 	}
+	if !msg.deadline.IsZero() && time.Now().After(msg.deadline) {
+		return statusErr("agent request arrived too late; ignored")
+	}
 	req := msg.req
 	if !req.Open && req.SaveAs == "" {
 		return fail(errors.New("request neither opens a page nor saves a preset"))
@@ -91,6 +105,11 @@ func (a *app) handleRemote(msg remoteMsg) tea.Cmd {
 	var warns []string
 	var cmd tea.Cmd
 	if req.Open {
+		// Swapping the page under an overlay or a text input would hand the
+		// user's next keystrokes to the agent's page (q quits, digits jump).
+		if a.overlay != nil || a.top().InputActive() {
+			return fail(errors.New("the user is typing or has a dialog open; nothing opened, try again shortly"))
+		}
 		prevTF := a.tf
 		v, w, err := a.launchView(req.Page)
 		if err != nil {
@@ -98,8 +117,14 @@ func (a *app) handleRemote(msg remoteMsg) tea.Cmd {
 		}
 		view, warns = v, w
 		cmd = a.navigate(view, false)
+		// The covered pages keep their window; esc off this page restores
+		// it rather than refetching them all on the new one (ADR-0013).
 		if a.tf != prevTF {
 			a.prev = nil
+			if a.windowBelow == nil {
+				a.windowBelow = map[viewModel]catalog.Timeframe{}
+			}
+			a.windowBelow[view] = prevTF
 		}
 		res.Page = view.Crumb()
 	} else {

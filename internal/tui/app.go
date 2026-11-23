@@ -166,6 +166,9 @@ type app struct {
 
 	stack []viewModel
 	prev  []viewModel // '-' toggles between the two most recent stacks
+	// windowBelow is the session window to restore when esc pops a page
+	// an agent pushed on a new window: the pages it covers still use it.
+	windowBelow map[viewModel]catalog.Timeframe
 
 	// overlay is the open modal (nil = none): command palette, help,
 	// timeframe/history/open-with/segment/context pickers. One at a time —
@@ -709,8 +712,14 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			}
 			if len(a.stack) > 1 {
 				a.prev = a.stack
+				popped := top
 				a.stack = a.stack[:len(a.stack)-1]
 				a.notice = queryNotice{} // stale for the view we just left
+				if tf, ok := a.windowBelow[popped]; ok {
+					delete(a.windowBelow, popped)
+					a.tf = tf
+					a.prev = nil // '-' would return to a page on the other window
+				}
 			}
 			return nil
 		}
@@ -835,8 +844,7 @@ func (a *app) launchPage(msg NavigateMsg, tf catalog.Timeframe, warns *[]string)
 			*warns = append(*warns, fmt.Sprintf("dropping facet with unsafe field %q", f.Field))
 			continue
 		}
-		facets = append(facets, catalog.Facet{Field: f.Field, Value: f.Value, Tokens: f.Tokens,
-			MapField: f.MapField, MapKey: f.MapKey})
+		facets = append(facets, f.Facet())
 	}
 	scope := catalog.Scope{Timeframe: tf}
 	if msg.Lens != "" {
@@ -1102,6 +1110,7 @@ func (a *app) broadcast(msg tea.Msg) tea.Cmd {
 // refetch) uses the window the header advertises.
 func (a *app) setTimeframe(tf catalog.Timeframe) tea.Cmd {
 	a.tf = tf
+	a.windowBelow = nil
 	seen := map[viewModel]bool{}
 	var cmds []tea.Cmd
 	for _, v := range append(append([]viewModel{}, a.stack...), a.prev...) {

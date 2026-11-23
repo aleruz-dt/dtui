@@ -96,18 +96,17 @@ is never edited. Does not need a TTY.`,
 			return err
 		}
 		path, err := socketPath(remoteSession)
-		if err != nil {
-			return err
-		}
-		// An explicit --context must match the listening TUI's; otherwise the
-		// save follows whatever context the user is looking at.
-		nav.Context = contextOverride()
-		reply, err := sendRemote(path, tui.RemoteRequest{Page: nav, SaveAs: name})
-		if !errors.Is(err, errNoListener) {
-			if err != nil {
-				return err
+		if err == nil {
+			// An explicit --context must match the listening TUI's; otherwise
+			// the save follows whatever context the user is looking at.
+			nav.Context = contextOverride()
+			var reply remoteReply
+			if reply, err = sendRemote(path, tui.RemoteRequest{Page: nav, SaveAs: name}); err == nil {
+				return reportRemote(cmd.OutOrStdout(), reply)
 			}
-			return reportRemote(cmd.OutOrStdout(), reply)
+		}
+		if !errors.Is(err, errNoListener) && !errors.Is(err, errRemoteUnsupported) {
+			return err
 		}
 		ctx, err := presetContext()
 		if err != nil {
@@ -425,8 +424,7 @@ func navFacets(in []catalog.Facet) []tui.NavFacet {
 	}
 	out := make([]tui.NavFacet, 0, len(in))
 	for _, f := range in {
-		out = append(out, tui.NavFacet{Field: f.Field, Value: f.Value, Tokens: f.Tokens,
-			MapField: f.MapField, MapKey: f.MapKey})
+		out = append(out, tui.NavFacetOf(f))
 	}
 	return out
 }
@@ -434,8 +432,7 @@ func navFacets(in []catalog.Facet) []tui.NavFacet {
 func catalogFacetsFromNav(in []tui.NavFacet) []catalog.Facet {
 	out := make([]catalog.Facet, 0, len(in))
 	for _, f := range in {
-		out = append(out, catalog.Facet{Field: f.Field, Value: f.Value, Tokens: f.Tokens,
-			MapField: f.MapField, MapKey: f.MapKey})
+		out = append(out, f.Facet())
 	}
 	return out
 }

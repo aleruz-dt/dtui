@@ -355,11 +355,17 @@ Each connection carries one JSON `RemoteRequest`: a `NavigateMsg` page,
 breadcrumb, the preset saved, or an error. `dtui send` resolves the launch
 grammar with `resolveLaunch` and sets `open` (and `save_as` with `--save`).
 `dtui save-preset` sends a save-only request, and writes the personal file
-itself only when nothing is listening.
+itself only when nothing is listening. On Windows, where the socket cannot
+be made owner-only, `--listen` and `send` refuse and `save-preset` always
+writes the file.
 
 Inside `internal/tui` (`remote.go`), opening *pushes* through `launchView`
 (unlike a deep link), refuses a `Context` other than the session's, and sets
-"agent opened …" on the status line. Saving takes `tableView.presetDraft`
+"agent opened …" on the status line. An open is refused while a text input
+or overlay is active. A page pushed on a new window records the old one in
+`app.windowBelow`; `esc` off it restores the header's window to the one the
+covered pages still use. A request that reaches `Update` after its caller
+timed out is dropped. Saving takes `tableView.presetDraft`
 and `app.savePreset`, the same pair `W` uses, so the file, the `:preset`
 list and the saved shape match a keypress. Warnings such as a dropped unsafe
 facet still open the page, come back as an error, and block the save. `send`

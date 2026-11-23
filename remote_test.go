@@ -5,17 +5,27 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/dynatrace-oss/dtui/internal/tui"
 )
 
+// skipWithoutSockets skips where dtui refuses to serve a socket.
+func skipWithoutSockets(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("dtui serves no socket on Windows")
+	}
+}
+
 // shortSocketPath stays under the ~104-byte Unix socket path limit that
 // t.TempDir exceeds on macOS.
 func shortSocketPath(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "dtui")
+	skipWithoutSockets(t)
+	dir, err := os.MkdirTemp("", "dtui")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +130,17 @@ func TestBadRequestGetsAnError(t *testing.T) {
 	}
 }
 
+func TestWindowsRefusesToServeASocket(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows only")
+	}
+	if _, err := socketPath(defaultSession); !errors.Is(err, errRemoteUnsupported) {
+		t.Fatalf("err = %v, want errRemoteUnsupported", err)
+	}
+}
+
 func TestSessionNameCannotEscapeRuntimeDir(t *testing.T) {
+	skipWithoutSockets(t)
 	for _, name := range []string{"", "../x", "a/b", strings.Repeat("a", 33)} {
 		if _, err := socketPath(name); err == nil {
 			t.Errorf("socketPath(%q) accepted", name)

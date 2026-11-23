@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"time"
 
 	"github.com/adrg/xdg"
@@ -19,9 +20,10 @@ import (
 )
 
 // Remote navigation (ADR-0019): `dtui --listen` serves a Unix socket that
-// accepts one JSON NavigateMsg per connection and answers one remoteReply.
-// The socket carries page descriptors only — never tenant data, credentials
-// or keystrokes — and is reachable only by the user who owns it.
+// accepts one JSON tui.RemoteRequest per connection (a page to open and/or a
+// personal preset name to save it under) and answers one remoteReply. The
+// socket carries page descriptors and preset names only — never tenant data,
+// credentials or keystrokes — and is reachable only by the user who owns it.
 
 const defaultSession = "default"
 
@@ -43,7 +45,8 @@ in agent sessions. It never switches the TUI's context.
 
 Output: "opened <page>" and, with --save, "saved preset <name>"; exit 0.
 On error the reason goes to stderr and the exit code is 1; if a filter was
-dropped (e.g. an unsafe field) the page still opens, unsaved. If it reports
+dropped (e.g. an unsafe field) the page still opens, unsaved. If the user
+is typing or has a dialog open, nothing opens; retry shortly. If it reports
 that no dtui is listening, ask the user to run dtui --listen, or hand them
 the same command as dtui <view> ... to run themselves.`,
 	Example: `  # In the user's terminal
@@ -127,6 +130,9 @@ func reportRemote(w io.Writer, r remoteReply) error {
 // socketPath is the per-user socket for a session name. The name is
 // validated so it cannot walk out of the runtime directory.
 func socketPath(name string) (string, error) {
+	if runtime.GOOS == "windows" {
+		return "", errRemoteUnsupported
+	}
 	if !sessionName.MatchString(name) {
 		return "", fmt.Errorf("bad --session %q: use 1-32 letters, digits, - or _", name)
 	}
@@ -207,6 +213,10 @@ func serveConn(c net.Conn, handle tui.Remote) {
 	}
 	_ = json.NewEncoder(c).Encode(reply)
 }
+
+// errRemoteUnsupported means this OS cannot hold the socket to owner-only
+// access (os.Chmod on Windows only toggles read-only), so dtui never opens one.
+var errRemoteUnsupported = errors.New("--listen and send are not supported on Windows: dtui cannot make the socket owner-only there")
 
 // errNoListener means no TUI is serving the session's socket.
 var errNoListener = errors.New("no dtui is listening")

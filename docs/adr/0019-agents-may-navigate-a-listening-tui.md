@@ -29,7 +29,12 @@ otherwise.
   if any of the page's narrowing was dropped. Personal presets are local
   state (ADR-0017), not tenant configuration.
 - Pages are *pushed*, so `esc` returns to what the user was reading, and the
-  status line says an agent opened them.
+  status line says an agent opened them. A page on a new window leaves the
+  covered pages on theirs; `esc` off it restores the session window rather
+  than refetching them (ADR-0013). An open is refused while the user is
+  typing or has a dialog open, so their keystrokes never land on the
+  agent's page; the agent retries.
+- A request still queued when its caller gives up is dropped, not applied.
 - A remote request never switches context: the user chose the tenant this
   TUI shows. A save lands in that context's personal presets (ADR-0017), and
   the reply names it. A request carrying an explicit `--context` that differs
@@ -37,7 +42,9 @@ otherwise.
 - The socket is local (`$XDG_RUNTIME_DIR/dtui/<session>.sock`, mode
   `0600`), carries descriptors only (no tenant data, credentials or
   keystrokes) plus a preset name, and is served by the main package; `internal/tui` opens no
-  listener (`TestTUIOpensNoListener`).
+  listener (`TestTUIOpensNoListener`). Windows has no owner-only mode for
+  the socket, so `--listen` and `send` refuse there; `save-preset` writes
+  the file directly.
 - The reply names the page opened, the preset saved, or the error, so an agent can correct a
   bad request instead of leaving the user on an error.
 - Listening is opt-in per run. `send` renders nothing and needs no TTY, so it

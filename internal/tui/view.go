@@ -108,6 +108,17 @@ type NavFacet struct {
 	MapKey   string `json:"map_key,omitempty"`
 }
 
+// Facet is the catalog facet this descriptor names. It does not vet the
+// fields; launchPage checks them with catalog.SafeFacetField first.
+func (f NavFacet) Facet() catalog.Facet {
+	return catalog.Facet{Field: f.Field, Value: f.Value, Tokens: f.Tokens, MapField: f.MapField, MapKey: f.MapKey}
+}
+
+// NavFacetOf is the descriptor for a catalog facet, the inverse of Facet.
+func NavFacetOf(f catalog.Facet) NavFacet {
+	return NavFacet{Field: f.Field, Value: f.Value, Tokens: f.Tokens, MapField: f.MapField, MapKey: f.MapKey}
+}
+
 // waterfallMsg opens the span waterfall for one trace. focusSpanID anchors
 // the cursor on the span the jump came from ("" = trace root). at is that
 // span's start_time when known — the waterfall scopes its fetch to a tight

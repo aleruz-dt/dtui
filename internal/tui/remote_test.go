@@ -44,6 +44,59 @@ func TestRemoteNavigatePushesSoEscReturns(t *testing.T) {
 	}
 }
 
+func TestRemotePushOnNewWindowRestoresItOnEsc(t *testing.T) {
+	a := testApp(t, "pods")
+	pods := a.top().(*tableView)
+	before := a.tf
+	if r := remoteNav(t, a, NavigateMsg{Target: "logs", Timeframe: "7d"}); r.err != nil {
+		t.Fatal(r.err)
+	}
+	if a.tf.Label != "7d" || a.prev != nil {
+		t.Fatalf("tf = %s, prev = %v; want the new window and no '-' to the old one", a.tf.Label, a.prev)
+	}
+	press(a, key("esc"))
+	if a.top() != pods || a.tf != before || pods.scope.Timeframe != a.tf {
+		t.Fatalf("after esc: top %T, tf %s, pods on %s; want pods with the header on its window", a.top(), a.tf.Label, pods.scope.Timeframe.Label)
+	}
+	if a.prev != nil {
+		t.Error("'-' must not return to the page on the other window")
+	}
+}
+
+func TestRemoteOpenWaitsWhileTheUserTypes(t *testing.T) {
+	a := testApp(t, "pods")
+	press(a, key("/"))
+	if !a.top().InputActive() {
+		t.Fatal("setup: / should start a filter input")
+	}
+	if r := remoteNav(t, a, NavigateMsg{Target: "logs"}); r.err == nil || !strings.Contains(r.err.Error(), "typing") {
+		t.Fatalf("reply = %+v, want a refusal while the user types", r)
+	}
+	press(a, key("esc"))
+	press(a, key("?"))
+	if a.overlay == nil {
+		t.Fatal("setup: ? should open help")
+	}
+	if r := remoteNav(t, a, NavigateMsg{Target: "logs"}); r.err == nil {
+		t.Fatalf("reply = %+v, want a refusal under an open dialog", r)
+	}
+	if len(a.stack) != 1 {
+		t.Errorf("stack = %d, want nothing pushed", len(a.stack))
+	}
+}
+
+func TestRemoteRequestPastItsDeadlineIsDropped(t *testing.T) {
+	a := testApp(t, "pods")
+	saved := withSaves(a)
+	reply := make(chan remoteReply, 1)
+	_, cmd := a.Update(remoteMsg{req: RemoteRequest{Open: true, SaveAs: "errs",
+		Page: NavigateMsg{Target: "logs", Searches: []string{"a"}}}, reply: reply, deadline: time.Now().Add(-time.Second)})
+	deliver(a, cmd)
+	if len(a.stack) != 1 || len(*saved) != 0 {
+		t.Fatalf("stack = %d, saves = %d; a request its caller gave up on must not apply", len(a.stack), len(*saved))
+	}
+}
+
 func TestRemoteNavigateNeverSwitchesContext(t *testing.T) {
 	a := testApp(t, "pods")
 	r := remoteNav(t, a, NavigateMsg{Target: "logs", Context: "other"})
