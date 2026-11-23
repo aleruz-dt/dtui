@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
 
 func addServerSearch(a *app, term string) {
@@ -32,6 +34,9 @@ func TestJumpRestoresLastServerFilter(t *testing.T) {
 	}
 	if !strings.Contains(tv.dql, "timeout") {
 		t.Errorf("restored search missing from dql:\n%s", tv.dql)
+	}
+	if !strings.Contains(a.status, "timeout") || !strings.Contains(a.status, "F clears") {
+		t.Errorf("jump must say what it restored, status = %q", a.status)
 	}
 }
 
@@ -99,11 +104,15 @@ func TestLastFilterIsNotANamedPreset(t *testing.T) {
 		t.Fatalf("last filter leaked into :preset: %v", a.presets)
 	}
 	a.presets = map[string]NamedPreset{"payments-errors": {Name: "payments-errors", View: "logs", Searches: []string{"preset-term"}, Personal: true}}
+	deliver(a, a.applyNamedPreset("payments-errors"))
+	if tv := a.top().(*tableView); len(tv.searches) != 1 || tv.searches[0] != "preset-term" {
+		t.Fatalf("preset apply = %v", a.top().(*tableView).searches)
+	}
 	press(a, key("6"))
 	press(a, key("5"))
 	tv := a.top().(*tableView)
 	if len(tv.searches) != 1 || tv.searches[0] != "timeout" {
-		t.Fatalf("named preset must not replace last filter, got %v", tv.searches)
+		t.Fatalf("opening a named preset must not become the next jump's last filter, got %v", tv.searches)
 	}
 }
 
@@ -147,5 +156,41 @@ func TestContextSwitchDropsLastFilter(t *testing.T) {
 	tv := a.top().(*tableView)
 	if len(tv.searches) != 0 {
 		t.Fatalf("logs after :ctx should start unfiltered, got %v", tv.searches)
+	}
+}
+
+func TestScopedDrillSearchDoesNotBecomeLastFilter(t *testing.T) {
+	a := testApp(t, "problems")
+	seedRows(t, a, []map[string]any{problemRow()})
+	press(a, key("l")) // problems › logs, scoped to SERVICE-1
+	logs := a.top().(*tableView)
+	if logs.spec.Name != "logs" || logs.scope.Entity == nil {
+		t.Fatalf("drill logs = %v scope %+v", logs.Crumb(), logs.scope.Entity)
+	}
+	addServerSearch(a, "timeout")
+	press(a, key("5")) // unscoped logs
+	tv := a.top().(*tableView)
+	if tv.scope.Entity != nil {
+		t.Fatalf("hotkey logs should be unscoped, got %+v", tv.scope.Entity)
+	}
+	if len(tv.searches) != 0 {
+		t.Fatalf("search typed on scoped logs must not restore on jump, got %v", tv.searches)
+	}
+}
+
+func TestAPIViewDoesNotRecordOrRestoreLastFilter(t *testing.T) {
+	a := testApp(t, "slos")
+	tv := a.top().(*tableView)
+	tv.facets = []catalog.Facet{{Field: "id", Value: "slo-1"}}
+	deliver(a, func() tea.Msg { return historyMarkMsg{} })
+	if _, ok := a.lastFilter["slos"]; ok {
+		t.Fatal("API-backed slos must not record a last filter")
+	}
+
+	a.lastFilter = map[string]viewFilter{"slos": {searches: []string{"should-not-apply"}}}
+	deliver(a, a.jumpTo("slos", ""))
+	got := a.top().(*tableView)
+	if len(got.searches) != 0 {
+		t.Fatalf("jump to slos must not apply last filter, got %v", got.searches)
 	}
 }

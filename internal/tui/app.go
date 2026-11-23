@@ -590,7 +590,6 @@ func (a *app) navigate(view viewModel, replace bool) tea.Cmd {
 		a.stack = append(append([]viewModel{}, a.stack...), view)
 	}
 	a.recordHistory()
-	a.rememberLastFilter(false)
 	return tea.Batch(
 		view.Update(bodySizeMsg{width: a.width, height: a.bodyHeight()}),
 		view.Init(),
@@ -894,11 +893,12 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	if err != nil {
 		return statusErr(err.Error())
 	}
+	var restored string
 	if tv, ok := view.(*tableView); ok {
 		if filter != "" {
 			tv.setFilter(filter)
 		} else {
-			a.applyLastFilter(tv)
+			restored = a.applyLastFilter(tv)
 		}
 	}
 	nav := a.navigate(view, true)
@@ -911,6 +911,9 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	// the global scope doesn't reach them (the header pill dims too).
 	if a.segmentsRejected(name) {
 		return tea.Batch(nav, statusErr(fmt.Sprintf("%s is API-backed — segments don't apply", name)))
+	}
+	if restored != "" {
+		return tea.Batch(nav, status(restored))
 	}
 	return nav
 }
