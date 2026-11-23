@@ -43,7 +43,7 @@ type Options struct {
 	// Presets are named facet sets available to :preset this session
 	// (workspace + personal). SavePreset persists a new one; nil disables save.
 	// DeletePreset removes a personal preset; nil disables delete.
-	// WorkspacePresets are the committed .dtui.yaml copies, used to restore a
+	// WorkspacePresets are the project .dtui.yaml copies, used to restore a
 	// name after a personal overlay is deleted.
 	Presets          []NamedPreset
 	WorkspacePresets []NamedPreset

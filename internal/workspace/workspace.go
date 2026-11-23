@@ -1,7 +1,7 @@
 // Package workspace discovers and parses the per-project .dtui.yaml
-// workspace file: committable defaults (filter segments, timeframe, initial
-// view, preferred environment, named view presets) that tools apply on top of
-// the user's personal dtctl config. Unlike the local .dtctl.yaml (which
+// workspace file: defaults (filter segments, timeframe, initial view,
+// preferred environment, named view presets) that users may commit to their
+// own project and that tools apply on top of the user's personal dtctl config. Unlike the local .dtctl.yaml (which
 // replaces the global config wholesale), a workspace file carries no contexts,
 // no credentials, and no executable keys by construction — it can only narrow
 // what a session shows, never change what it can do. Consumed by dtui; dtctl
@@ -419,7 +419,7 @@ func SavePreset(path, name string, p Preset) error {
 }
 
 // DeletePreset removes one named preset from a personal presets file. It
-// does not edit a committed .dtui.yaml.
+// does not edit the project's .dtui.yaml.
 func DeletePreset(path, name string) error {
 	if !ValidPresetName(name) {
 		return fmt.Errorf("preset name %q must be kebab-case (a-z, digits, hyphens)", name)

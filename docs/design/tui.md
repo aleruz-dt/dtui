@@ -256,8 +256,10 @@ pod → workload → namespace → the sibling workload that's actually broken.
   change just broadcasts `Refresh()`. The header shows `◐ <name> [+N]`,
   dimmed on API-backed views (slos/detectors/log-patterns bypass
   `query:execute`, so the scope can't reach them and `jumpTo` says so). A
-  project's `.dtui.yaml` — found by walking up from the cwd, committable
-  to the repo — pre-selects segments at startup: resolved async against the
+  project's `.dtui.yaml` — found by walking up from the cwd; a user file
+  that dtui does not ship and this repo ignores, which users commit to
+  their own project to persist and share it — pre-selects segments at
+  startup: resolved async against the
   tenant list by exact UID, then exact case-insensitive name; unknown or
   ambiguous refs warn instead of guessing. Segments with variables prompt for
   values right in the picker: space-toggling an unbound one opens a **value

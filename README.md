@@ -249,9 +249,17 @@ Contexts and credentials are managed with dtctl; a `--context` flag or
 A `.dtui.yaml` gives dtui session-local defaults: which view to open,
 the timeframe, the environment, extra tag columns, filter segments, and
 named view presets. dtui finds it by walking up from the current directory,
-like `.git`, so you can commit one to a project (everyone who runs `dtui`
-inside it gets the same setup) or put one in `~` as a personal default.
-**Every key is optional, and no file at all is fine.**
+like `.git`. **Every key is optional, and no file at all is fine.**
+
+You write this file yourself; dtui does not ship one, and this repository
+ignores `.dtui.yaml` rather than committing one. Where you keep it decides
+who gets it:
+
+- **Commit it to your own project's repository** to persist the setup and
+  share it with colleagues: everyone who runs `dtui` inside that checkout
+  gets the same view, timeframe, segments and presets.
+- **Put it in `~`** (or leave it uncommitted) as a personal default that only
+  you see.
 
 `.dtui.yaml` is not dtctl's `.dtctl.yaml`: it never defines a context, URL
 or credentials. It only selects an existing dtctl context (by `environment`)

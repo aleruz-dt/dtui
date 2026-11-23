@@ -20,8 +20,10 @@ exist so the *interactive* UI is not launched from a pipe or an agent).
 Named presets are **session narrowing**, the same class as workspace
 `.dtui.yaml` segments and the navigation history file:
 
-- A committed `.dtui.yaml` `presets:` map is project-local, read-only inside
-  dtui. Edit the file in git to change it.
+- A `.dtui.yaml` `presets:` map is project-local, read-only inside dtui.
+  The file belongs to the user's project, not to dtui: users commit it to
+  their own repository to share presets with colleagues, and edit it there
+  to change them.
 - `W` in the TUI writes only `~/.local/state/dtui/presets/<context>.yaml`
   (version + presets). That path is UI state, not dtctl config, and not a
   tenant write.
@@ -31,8 +33,9 @@ Named presets are **session narrowing**, the same class as workspace
   a launch (`--context`, `DTCTL_CONTEXT`, workspace environment, current
   context). `:ctx` swaps the list, and `list-presets` / `delete-preset` act
   on the active context. The file name is the context name path-escaped
-  (no separators, no leading dot). Committed `.dtui.yaml` presets stay
-  shared: they belong to the project, which already pins its environment.
+  (no separators, no leading dot). `.dtui.yaml` presets stay shared across
+  contexts: they belong to the user's project, which already pins its
+  environment.
 - `dtui --preset`, `:preset`, `dtui list-presets`, and `dtui delete-preset`
   select, list, or delete that local narrowing. They never POST to the
   tenant. `delete-preset` and `d` in the picker only touch the personal

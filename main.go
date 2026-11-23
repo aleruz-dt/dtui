@@ -96,7 +96,7 @@ dtctl (dtctl ctx set). dtui is read-only and interactive-only.`,
 	ValidArgsFunction: viewCompletion,
 	SilenceUsage:      true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// A committed .dtui.yaml supplies workspace defaults; a broken
+		// The user's project .dtui.yaml supplies workspace defaults; a broken
 		// one must never brick dtui — errors degrade to a startup warning.
 		ws, wsWarnings := loadWorkspace()
 
